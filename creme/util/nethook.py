@@ -88,7 +88,8 @@ class Trace(contextlib.AbstractContextManager):
                 # copy operation.  That allows in-place operations
                 # to follow without error.
                 if retain_grad:
-                    output = recursive_copy(retainer.output, clone=True, detach=False)
+                    output = recursive_copy(
+                        retainer.output, clone=True, detach=False)
             if stop:
                 raise StopForward()
             return output
@@ -278,7 +279,8 @@ def hierarchical_subsequence(
     if first is last is after is upto is None:
         return sequential if share_weights else copy.deepcopy(sequential)
     assert isinstance(sequential, torch.nn.Sequential), (
-        ".".join((first or last or after or upto)[:depth] or "arg") + " not Sequential"
+        ".".join((first or last or after or upto)[
+                 :depth] or "arg") + " not Sequential"
     )
     including_children = (first is None) and (after is None)
     included_children = OrderedDict()
@@ -438,7 +440,8 @@ def invoke_with_optional_args(fn, *args, **kwargs):
                 unpassed = ", ".join(
                     argspec.args[u] for u in unmatched_pos if u < defaulted_pos
                 )
-                raise TypeError(f"{fn.__name__}() cannot be passed {unpassed}.")
+                raise TypeError(
+                    f"{fn.__name__}() cannot be passed {unpassed}.")
     # Pass remaining kw args if they can be accepted.
     pass_kw = {
         k: v

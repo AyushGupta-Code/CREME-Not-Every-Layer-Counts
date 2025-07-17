@@ -1,32 +1,31 @@
-import sys
-import os
-import csv
-import json
-from typing import Iterable, Dict,Optional
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-import os
-import ast
-
-import torch
+import faulthandler
+import platform
+import io
+import tempfile
+from math import comb
+import signal
+import multiprocessing
+import contextlib
+from util import nethook
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
 )
-from util import nethook
-import contextlib
+import torch
+import ast
+import sys
 import os
-import multiprocessing
-import signal
+import csv
+import json
+from typing import Iterable, Dict, Optional
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from math import comb
-import os
-import tempfile
-import io
-import platform
-import faulthandler
+
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
 @contextlib.contextmanager
 def chdir(root):
     if root == ".":
@@ -40,11 +39,15 @@ def chdir(root):
         raise exc
     finally:
         os.chdir(cwd)
+
+
 @contextlib.contextmanager
 def create_tempdir():
     with tempfile.TemporaryDirectory() as dirname:
         with chdir(dirname):
             yield dirname
+
+
 def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     """
     This disables various destructive functions and prevents the generated code
@@ -60,10 +63,13 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
 
     if maximum_memory_bytes is not None:
         import resource
-        resource.setrlimit(resource.RLIMIT_AS, (maximum_memory_bytes, maximum_memory_bytes))
-        resource.setrlimit(resource.RLIMIT_DATA, (maximum_memory_bytes, maximum_memory_bytes))
+        resource.setrlimit(resource.RLIMIT_AS,
+                           (maximum_memory_bytes, maximum_memory_bytes))
+        resource.setrlimit(resource.RLIMIT_DATA,
+                           (maximum_memory_bytes, maximum_memory_bytes))
         if not platform.uname().system == 'Darwin':
-            resource.setrlimit(resource.RLIMIT_STACK, (maximum_memory_bytes, maximum_memory_bytes))
+            resource.setrlimit(resource.RLIMIT_STACK,
+                               (maximum_memory_bytes, maximum_memory_bytes))
 
     faulthandler.disable()
 
@@ -118,6 +124,8 @@ def reliability_guard(maximum_memory_bytes: Optional[int] = None):
     sys.modules['resource'] = None
     sys.modules['psutil'] = None
     sys.modules['tkinter'] = None
+
+
 @contextlib.contextmanager
 def swallow_io():
     stream = WriteOnlyStringIO()
@@ -125,6 +133,8 @@ def swallow_io():
         with contextlib.redirect_stderr(stream):
             with redirect_stdin(stream):
                 yield
+
+
 class WriteOnlyStringIO(io.StringIO):
     """ StringIO that throws an exception when it's read from """
 
@@ -144,6 +154,7 @@ class WriteOnlyStringIO(io.StringIO):
 
 class redirect_stdin(contextlib._RedirectStream):  # type: ignore
     _stream = 'stdin'
+
 
 class TimeoutException(Exception):
     pass
@@ -175,7 +186,7 @@ def check_correctness(problem: Dict, completion: str, timeout: float,
                 problem["test"] + "\n" +
                 f"check({problem['entry_point']})"
             )
-            
+
             try:
                 exec_globals = {}
                 with swallow_io():
@@ -209,7 +220,8 @@ def check_correctness(problem: Dict, completion: str, timeout: float,
         completion_id=completion_id,
     )
 
-def check_correctness_mbpp(prompt:str,example: dict, completion: str, timeout,completion_id) -> dict:
+
+def check_correctness_mbpp(prompt: str, example: dict, completion: str, timeout, completion_id) -> dict:
     """
     Check if a model-generated completion is correct for a single MBPP example.
 
@@ -225,7 +237,9 @@ def check_correctness_mbpp(prompt:str,example: dict, completion: str, timeout,co
     def _evaluate(result_container):
         try:
             exec_globals = {}
-            code ='\n'.join(example['test_imports'])+ '\n'+prompt+'\n' +"    "+completion.strip() + '\n' + '\n'.join(example['test_list']).strip()
+            code = '\n'.join(example['test_imports']) + '\n'+prompt+'\n' + "    " + \
+                completion.strip() + '\n' + \
+                '\n'.join(example['test_list']).strip()
             # print(code)
             with swallow_io(), time_limit(timeout):
                 exec(code, exec_globals)
@@ -248,8 +262,8 @@ def check_correctness_mbpp(prompt:str,example: dict, completion: str, timeout,co
         "completion": completion,
         "passed": status == "passed",
         "result": status,
-        "completion_id":completion_id,
-    }    
+        "completion_id": completion_id,
+    }
 
 
 @contextlib.contextmanager
@@ -263,9 +277,11 @@ def time_limit(seconds: float):
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
 
+
 def filter_code(completion: str) -> str:
     completion = completion.lstrip("\n")
     return completion.split("\n\n")[0]
+
 
 def fix_indents(text: str) -> str:
     return text.replace("\t", "    ")
@@ -273,9 +289,9 @@ def fix_indents(text: str) -> str:
 
 @torch.inference_mode()
 def generate_batch_completion(
-    model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prompt, batch_size,have_make_inputs=False
+    model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prompt, batch_size, have_make_inputs=False
 ) -> list[str]:
-    if have_make_inputs==False:
+    if have_make_inputs == False:
         input_batch = [prompt for _ in range(batch_size)]
         inputs = tokenizer(input_batch, return_tensors="pt").to(model.device)
         input_ids_cutoff = inputs.input_ids.size(dim=1)
@@ -320,64 +336,72 @@ def pass_at_k(n: int, c: int, k: int) -> float:
     if k > n:
         return float('nan')
     if n - c < k:
-        return 1.0 
+        return 1.0
     return 1 - comb(n-c, k)/comb(n, k)
 
-def evaluate_prompt(model,tokenizer, prompt,problem, batch_size=10,num_iterations=1,have_make_inputs=False):
-    k_list = [1, 5, 10]
-    completions= []
-    
-    if have_make_inputs==False:
-        # print("have replace")
-        prompt=prompt.replace("    ", "\t")
-    # print("prompt:",prompt)
-    for _ in range(num_iterations):
-        batch_completions = generate_batch_completion(
-            model, tokenizer,prompt, batch_size,have_make_inputs
-        )
-        completions.extend(batch_completions)
-    pass_count= 0
-    for i, code_str in enumerate(completions):
-        # print(code_str)
-        result = check_correctness(problem, code_str, timeout=3.0, completion_id=i)
-        # print(result)
-        if result["passed"]:
-            pass_count += 1
-    n_orig = len(completions)
-    c_orig = pass_count
-    orig_ratio = c_orig / n_orig if n_orig>0 else 0.0
-    passk= []
-    for k in k_list:
-        score_k = pass_at_k(n_orig, c_orig, k)
-        passk.append(score_k)
-    return orig_ratio,passk
 
-def evaluate_mbpp_prompt(model,tokenizer, prompt,problem, batch_size=10,num_iterations=1,have_make_inputs=False):
+def evaluate_prompt(model, tokenizer, prompt, problem, batch_size=10, num_iterations=1, have_make_inputs=False):
     k_list = [1, 5, 10]
-    completions= []
+    completions = []
+
+    if have_make_inputs == False:
+        # print("have replace")
+        prompt = prompt.replace("    ", "\t")
     # print("prompt:",prompt)
     for _ in range(num_iterations):
         batch_completions = generate_batch_completion(
-            model, tokenizer,prompt, batch_size,have_make_inputs
+            model, tokenizer, prompt, batch_size, have_make_inputs
         )
         completions.extend(batch_completions)
-    pass_count= 0
+    pass_count = 0
     for i, code_str in enumerate(completions):
         # print(code_str)
-        result = check_correctness_mbpp(prompt,problem, code_str, timeout=3.0, completion_id=i)
+        result = check_correctness(
+            problem, code_str, timeout=3.0, completion_id=i)
         # print(result)
         if result["passed"]:
             pass_count += 1
     n_orig = len(completions)
     c_orig = pass_count
-    orig_ratio = c_orig / n_orig if n_orig>0 else 0.0
-    passk= []
+    orig_ratio = c_orig / n_orig if n_orig > 0 else 0.0
+    passk = []
     for k in k_list:
         score_k = pass_at_k(n_orig, c_orig, k)
         passk.append(score_k)
-    return orig_ratio,passk
+    return orig_ratio, passk
+
+
+def evaluate_mbpp_prompt(model, tokenizer, prompt, problem, batch_size=10, num_iterations=1, have_make_inputs=False):
+    k_list = [1, 5, 10]
+    completions = []
+    # print("prompt:",prompt)
+    for _ in range(num_iterations):
+        batch_completions = generate_batch_completion(
+            model, tokenizer, prompt, batch_size, have_make_inputs
+        )
+        completions.extend(batch_completions)
+    pass_count = 0
+    for i, code_str in enumerate(completions):
+        # print(code_str)
+        result = check_correctness_mbpp(
+            prompt, problem, code_str, timeout=3.0, completion_id=i)
+        # print(result)
+        if result["passed"]:
+            pass_count += 1
+    n_orig = len(completions)
+    c_orig = pass_count
+    orig_ratio = c_orig / n_orig if n_orig > 0 else 0.0
+    passk = []
+    for k in k_list:
+        score_k = pass_at_k(n_orig, c_orig, k)
+        passk.append(score_k)
+    return orig_ratio, passk
+
+
 def read_problems(evalset_file) -> Dict[str, Dict]:
     return {task["task_id"]: task for task in stream_jsonl(evalset_file)}
+
+
 def stream_jsonl(filename: str) -> Iterable[Dict]:
     """
     Parses each jsonl line and yields it as a dictionary
@@ -401,23 +425,29 @@ def write_jsonl(filename: str, data: Iterable[Dict], append: bool = False):
         for x in data:
             fp.write((json.dumps(x) + "\n").encode('utf-8'))
 
-def get_problem(task_id,file_name):
-    problems=read_problems(file_name)
-    problem=problems[task_id]
+
+def get_problem(task_id, file_name):
+    problems = read_problems(file_name)
+    problem = problems[task_id]
     return problem
+
+
 def load_sanitized_mbpp(path):
     return {
         task["task_id"]: {
             **task,
-            "test_imports":ast.literal_eval(task["test_imports"]),
+            "test_imports": ast.literal_eval(task["test_imports"]),
             "test_list": ast.literal_eval(task["test_list"])
         }
         for task in stream_jsonl(path)
     }
-def get_mbpp_problem(task_id,file_name):
-    problems=load_sanitized_mbpp(file_name)
-    problem=problems[task_id]
+
+
+def get_mbpp_problem(task_id, file_name):
+    problems = load_sanitized_mbpp(file_name)
+    problem = problems[task_id]
     return problem
+
 
 def extract_function_signature(code: str) -> str:
     lines = code.strip().splitlines()
@@ -436,9 +466,11 @@ def extract_function_signature(code: str) -> str:
             break
 
     if not func_def:
-        raise ValueError("cannot find function definition in the provided code")
+        raise ValueError(
+            "cannot find function definition in the provided code")
 
     return "\n".join(imports + [func_def])
+
 
 def parse_test_list(test_list_raw: str):
     if isinstance(test_list_raw, list):
@@ -451,7 +483,9 @@ def parse_test_list(test_list_raw: str):
                 return eval(test_list_raw)
             except Exception as e:
                 raise ValueError(f"test_list error: {e}")
-    raise ValueError("test_list type error: expected list or str, got {type(test_list_raw)}")
+    raise ValueError(
+        "test_list type error: expected list or str, got {type(test_list_raw)}")
+
 
 def build_prompt(mbpp_example: Dict) -> str:
     description = mbpp_example["prompt"].strip()
@@ -474,17 +508,21 @@ def build_prompt(mbpp_example: Dict) -> str:
     docstring += '\n    """'
     return f"{func_def}\n{docstring}"
 
+
 def write_csv_header_if_not_exists(csv_path, header):
     if not os.path.exists(csv_path):
         with open(csv_path, mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(header)
 
+
 def append_row_to_csv(csv_path, row):
     formatted_row = [f"{x:.2f}" if isinstance(x, float) else x for x in row]
     with open(csv_path, mode='a', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(formatted_row)
+
+
 def append_json_record(json_path, record):
     os.makedirs(os.path.dirname(json_path), exist_ok=True)
     if not os.path.exists(json_path):

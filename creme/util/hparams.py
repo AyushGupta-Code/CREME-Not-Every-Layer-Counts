@@ -27,12 +27,11 @@ class HyperParams:
                 except:
                     pass
         return config
-    
+
     def to_dict(config) -> dict:
         dict = asdict(config)
         return dict
-            
-        
+
 
 @dataclass
 class CREMEHyperParams(HyperParams):

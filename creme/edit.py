@@ -1,7 +1,7 @@
 import os
 from model import ModelLoader
 from copy import deepcopy
-from typing import Any, Dict, Tuple,Any
+from typing import Any, Dict, Tuple, Any
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from util import nethook
@@ -14,7 +14,8 @@ from util.utils import (
     write_csv_header_if_not_exists,
     append_row_to_csv,
 )
-from causal_trace import L2_causal_trace    
+from causal_trace import L2_causal_trace
+
 
 def apply_my_knowledge_edit_to_model(
     model: AutoModelForCausalLM,
@@ -37,7 +38,8 @@ def apply_my_knowledge_edit_to_model(
     if copy:
         model = deepcopy(model)
 
-    deltas = execute_rep_align_edit(model, tok, ori_prompt,pert_prompt, hparams)
+    deltas = execute_rep_align_edit(
+        model, tok, ori_prompt, pert_prompt, hparams)
 
     with torch.no_grad():
         for w_name, upd_matrix in deltas.items():
@@ -53,6 +55,7 @@ def apply_my_knowledge_edit_to_model(
         weights_copy = {}
 
     return model, weights_copy
+
 
 def execute_rep_align_edit(
     model: AutoModelForCausalLM,
@@ -83,19 +86,24 @@ def execute_rep_align_edit(
         orig_inputs = tokenizer(orig_prompt, return_tensors="pt").to(device)
         pert_inputs = tokenizer(pert_prompt, return_tensors="pt").to(device)
 
-        orig_gen_ids = model.generate(**orig_inputs, max_new_tokens=max_new_tokens)
-        pert_gen_ids = model.generate(**pert_inputs, max_new_tokens=max_new_tokens)
+        orig_gen_ids = model.generate(
+            **orig_inputs, max_new_tokens=max_new_tokens)
+        pert_gen_ids = model.generate(
+            **pert_inputs, max_new_tokens=max_new_tokens)
 
-        orig_concat = torch.cat([orig_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
-        pert_concat = torch.cat([pert_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
+        orig_concat = torch.cat(
+            [orig_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
+        pert_concat = torch.cat(
+            [pert_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
 
         orig_start = orig_inputs["input_ids"].shape[1]
         pert_start = pert_inputs["input_ids"].shape[1]
 
     hidden_states = {}
+
     def capture_output(x, layer_name_inner):
         if layer_name_inner == layer_name:
-            x0 = x[0] if isinstance(x, tuple) else x 
+            x0 = x[0] if isinstance(x, tuple) else x
             hidden_states["out"] = x0
         return x
 
@@ -104,11 +112,11 @@ def execute_rep_align_edit(
     ):
         model(input_ids=orig_concat)
 
-    orig_hidden = hidden_states["out"][:, orig_start:, :].detach() 
-    print("orig_hidden.shape:",orig_hidden.shape)
+    orig_hidden = hidden_states["out"][:, orig_start:, :].detach()
+    print("orig_hidden.shape:", orig_hidden.shape)
     last_loss = float("inf")
     no_improve_count = 0
-    patience = 3 
+    patience = 3
     for step in range(hparams.num_steps):
         print(f"==  {step+1}/{hparams.num_steps} step ==")
         hidden_states.clear()
@@ -119,21 +127,25 @@ def execute_rep_align_edit(
         ):
             model(input_ids=pert_concat)
 
-        pert_hidden = hidden_states["out"][:, pert_start:, :]  
-        print("pert_hidden:",pert_hidden.shape)
+        pert_hidden = hidden_states["out"][:, pert_start:, :]
+        print("pert_hidden:", pert_hidden.shape)
         hidden_states.clear()
         with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
             model(input_ids=orig_concat)
         orig_hidden_new = hidden_states["out"][:, orig_start:, :]
-        print("ori_hidden_new:",pert_hidden.shape)
+        print("ori_hidden_new:", pert_hidden.shape)
         min_len = min(orig_hidden.shape[1], pert_hidden.shape[1])
         min_len_orig = min(orig_hidden.shape[1], orig_hidden_new.shape[1])
-        print("min_len_orig:",min_len_orig)
-        loss_main = F.mse_loss(pert_hidden[:, :min_len], orig_hidden[:, :min_len])
-        loss_reg = F.mse_loss(orig_hidden_new[:, :min_len_orig], orig_hidden[:, :min_len_orig])
-        lambda_reg = hparams.lambda_reg if hasattr(hparams, 'lambda_reg') else 0.1
+        print("min_len_orig:", min_len_orig)
+        loss_main = F.mse_loss(
+            pert_hidden[:, :min_len], orig_hidden[:, :min_len])
+        loss_reg = F.mse_loss(
+            orig_hidden_new[:, :min_len_orig], orig_hidden[:, :min_len_orig])
+        lambda_reg = hparams.lambda_reg if hasattr(
+            hparams, 'lambda_reg') else 0.1
         loss = loss_main + lambda_reg * loss_reg
-        print(f"Loss_main: {loss_main.item():.6f}, Loss_reg: {loss_reg.item():.6f}, Total: {loss.item():.6f}")
+        print(
+            f"Loss_main: {loss_main.item():.6f}, Loss_reg: {loss_reg.item():.6f}, Total: {loss.item():.6f}")
         if loss.item() < last_loss:
             last_loss = loss.item()
             no_improve_count = 0
