@@ -1,6 +1,6 @@
 
-from task_list import TaskList
-from util.utils import (
+from creme.task_list import TaskList
+from creme.util.utils import (
     evaluate_prompt,
     get_problem,
     write_csv_header_if_not_exists,
@@ -10,10 +10,10 @@ from util.utils import (
     evaluate_mbpp_prompt
 
 )
-from util import CREMEHyperParams
-from model import ModelLoader
-from causal_trace import L2_causal_trace,mbpp_L2_causal_trace
-from edit import apply_my_knowledge_edit_to_model
+from creme.util import CREMEHyperParams
+from creme.model import ModelLoader
+from creme.causal_trace import L2_causal_trace,mbpp_L2_causal_trace
+from creme.edit import apply_my_knowledge_edit_to_model
 import torch
 import os
 import gc
@@ -33,15 +33,15 @@ def model_editing(pert_type,task_name):
     for task in task_list:
         print(f"\n=== start task {task} ===")
         if "codellama" in task_name:
-            hparams_path = "./hparams/codellama.yaml"
+            hparams_path = "./creme/hparams/codellama.yaml"
         elif "qwen" in task_name:
-            hparams_path = "./hparams/qwen.yaml"
+            hparams_path = "./creme/hparams/qwen.yaml"
         hparams = CREMEHyperParams.from_hparams(hparams_path)
         editor = ModelLoader.from_hparams(hparams)
         if "humaneval" in task_name:
             task_id=f"HumanEval/{task}"
-            ori_problem=get_problem(task_id,"../data/humaneval/original/HumanEval.jsonl")
-            pert_problem=get_problem(task_id,f"../data/humaneval/perturbed/{pert_type}.jsonl")
+            ori_problem=get_problem(task_id,"data/humaneval/original/HumanEval.jsonl")
+            pert_problem=get_problem(task_id,f"data/humaneval/perturbed/{pert_type}.jsonl")
             orig_prompt=ori_problem["prompt"].replace("    ", "\t")
             pert_prompt=pert_problem["prompt"].replace("    ", "\t")
             if len(editor.hparams.layers) == 0:
@@ -65,14 +65,14 @@ def model_editing(pert_type,task_name):
                 if task2==task:
                     continue
                 task_id2=f"HumanEval/{task2}"
-                pert_problem2=get_problem(task_id2,f"../data/humaneval/perturbed/{pert_type}.jsonl")
+                pert_problem2=get_problem(task_id2,f"data/humaneval/perturbed/{pert_type}.jsonl")
                 acc_edit2,passk4=evaluate_prompt(edited_model,editor.tok,pert_problem2["prompt"],pert_problem2)
                 append_row_to_csv(summary_csv, [task_id2,"edit",task_id, *passk4, acc_edit2])
                 print(f"task{task2} result after edit:",acc_edit2,passk4)
         elif "mbpp" in task_name:
             task_id=task
-            ori_problem=get_mbpp_problem(task_id,"../data/mbpp/original/mbpp_original.jsonl")
-            pert_problem=get_mbpp_problem(task_id,f"../data/mbpp/perturbed/{pert_type}.jsonl")
+            ori_problem=get_mbpp_problem(task_id,"data/mbpp/original/mbpp_original.jsonl")
+            pert_problem=get_mbpp_problem(task_id,f"data/mbpp/perturbed/{pert_type}.jsonl")
             ori_prompt = build_prompt(ori_problem)
             pert_prompt = build_prompt(pert_problem)
             # print("ori_prompt:",ori_prompt)
@@ -98,7 +98,7 @@ def model_editing(pert_type,task_name):
                 if task2==task:
                     continue
                 task_id2=task2
-                pert_problem2=get_mbpp_problem(task_id2,f"../data/mbpp/perturbed/{pert_type}.jsonl")
+                pert_problem2=get_mbpp_problem(task_id2,f"data/mbpp/perturbed/{pert_type}.jsonl")
                 pert_prompt2=build_prompt(pert_problem2)
                 acc_edit2,passk4=evaluate_mbpp_prompt(edited_model,editor.tok,pert_prompt2,pert_problem2)
                 append_row_to_csv(summary_csv, [task_id2,"edit",task_id, *passk4, acc_edit2])
