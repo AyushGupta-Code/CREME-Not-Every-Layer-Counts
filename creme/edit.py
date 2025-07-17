@@ -15,7 +15,6 @@ from util.utils import (
     append_row_to_csv,
 )
 from causal_trace import L2_causal_trace    
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def apply_my_knowledge_edit_to_model(
     model: AutoModelForCausalLM,
@@ -63,15 +62,9 @@ def execute_rep_align_edit(
     hparams,
     max_new_tokens: int = 32,
 ) -> Dict[str, torch.Tensor]:
-    """
-    调整模型使得 target_layer 层中，perturbed prompt 生成部分的隐藏状态更接近 original prompt 的生成部分。
-    且original prompt输出的隐藏状态尽可能不变
-    """
-
     device = hparams.device
     layer_name = hparams.layer_module_tmp.format(hparams.layers[0])
 
-    # 获取需要编辑的参数
     weights = {
         n: p
         for n, p in model.named_parameters()
@@ -86,45 +79,38 @@ def execute_rep_align_edit(
         weight_decay=hparams.weight_decay,
     )
 
-    # 编码原始和扰动 prompt，并手动构造带 continuation 的输入
     with torch.no_grad():
         orig_inputs = tokenizer(orig_prompt, return_tensors="pt").to(device)
         pert_inputs = tokenizer(pert_prompt, return_tensors="pt").to(device)
 
-        # 使用 generate 获取 gold completion，便于构造 prompt + continuation 的完整序列
         orig_gen_ids = model.generate(**orig_inputs, max_new_tokens=max_new_tokens)
         pert_gen_ids = model.generate(**pert_inputs, max_new_tokens=max_new_tokens)
 
-        # 拼接 input_ids：prompt + continuation
         orig_concat = torch.cat([orig_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
         pert_concat = torch.cat([pert_inputs["input_ids"], orig_gen_ids[:, orig_inputs["input_ids"].shape[1]:]], dim=1)
 
-        # 记录生成 token 起始位置
         orig_start = orig_inputs["input_ids"].shape[1]
         pert_start = pert_inputs["input_ids"].shape[1]
 
-    # 定义 Hook 函数，保存指定层输出
     hidden_states = {}
     def capture_output(x, layer_name_inner):
         if layer_name_inner == layer_name:
-            x0 = x[0] if isinstance(x, tuple) else x  # shape: [B, T, D]
+            x0 = x[0] if isinstance(x, tuple) else x 
             hidden_states["out"] = x0
         return x
 
-    # 获取原始隐藏状态
     with torch.no_grad(), nethook.TraceDict(
         model, [layer_name], edit_output=capture_output
     ):
         model(input_ids=orig_concat)
 
-    orig_hidden = hidden_states["out"][:, orig_start:, :].detach()  # 只保留生成部分
+    orig_hidden = hidden_states["out"][:, orig_start:, :].detach() 
     print("orig_hidden.shape:",orig_hidden.shape)
-    # 优化扰动 prompt 生成部分使其靠近原始生成部分
     last_loss = float("inf")
     no_improve_count = 0
-    patience = 3  # 可配置，连续几步不下降就停止
+    patience = 3 
     for step in range(hparams.num_steps):
-        print(f"== 第 {step+1}/{hparams.num_steps} 步 ==")
+        print(f"==  {step+1}/{hparams.num_steps} step ==")
         hidden_states.clear()
         optimizer.zero_grad()
 
@@ -133,7 +119,7 @@ def execute_rep_align_edit(
         ):
             model(input_ids=pert_concat)
 
-        pert_hidden = hidden_states["out"][:, pert_start:, :]  # 只保留生成部分
+        pert_hidden = hidden_states["out"][:, pert_start:, :]  
         print("pert_hidden:",pert_hidden.shape)
         hidden_states.clear()
         with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
@@ -145,7 +131,6 @@ def execute_rep_align_edit(
         print("min_len_orig:",min_len_orig)
         loss_main = F.mse_loss(pert_hidden[:, :min_len], orig_hidden[:, :min_len])
         loss_reg = F.mse_loss(orig_hidden_new[:, :min_len_orig], orig_hidden[:, :min_len_orig])
-        # 总损失
         lambda_reg = hparams.lambda_reg if hasattr(hparams, 'lambda_reg') else 0.1
         loss = loss_main + lambda_reg * loss_reg
         print(f"Loss_main: {loss_main.item():.6f}, Loss_reg: {loss_reg.item():.6f}, Total: {loss.item():.6f}")
@@ -159,11 +144,9 @@ def execute_rep_align_edit(
             break
         loss.backward()
         optimizer.step()
-
-    # 返回 delta 并恢复原始参数
     deltas = {k: (weights[k] - weights_copy[k]).detach() for k in weights}
     with torch.no_grad():
         for k, v in weights.items():
             v[...] = weights_copy[k]
-    print("参数已恢复，返回 delta。")
+    print("Knowledge edit completed.")
     return deltas
