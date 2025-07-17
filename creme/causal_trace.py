@@ -9,7 +9,6 @@ from util.utils import (
     append_json_record,
     pass_at_k,
     check_correctness_mbpp,
-    get_mbpp_problem,
     build_prompt,
     evaluate_mbpp_prompt
 )
@@ -273,7 +272,7 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
             k_list = [1, 5, 10]
             passk = [pass_at_k(batch_size, c_orig, k) for k in k_list]
 
-            print(f"✅ 层 {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
+            print(f"✅ layer {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
             if ratio > best_pass_rate:
                 best_pass_rate = ratio
                 best_pass_rate_layer = []

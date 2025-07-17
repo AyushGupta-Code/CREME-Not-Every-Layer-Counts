@@ -6,7 +6,6 @@ from math import comb
 import signal
 import multiprocessing
 import contextlib
-from util import nethook
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,

@@ -1,7 +1,7 @@
 # CREME: Code Robustness Enhancement via Model Editing
 A model editing method to enhance the robustness of codeLLMs.
 
-This repository provides the replication package for our ICSE submission titled: **CREME: Robustness Enhancement of Code LLMs via Layer-Aware Model Editing**
+This repository provides the replication package for our ICSE submission titled:**CREME: Robustness Enhancement of Code LLMs via Layer-Aware Model Editing**
 
 ##  Environment Setup
 We recommend using Python 3.10+ with CUDA-compatible GPU. You can install the dependencies via:
@@ -34,6 +34,15 @@ pip install -r requirements.txt
 └── requirements.txt              # Required Python packages
 ```
 
+## Model Setup
+Please download and place the required model weights (e.g., CodeLLaMA or QwenCoder) into the following directory:
+```Python
+models/
+```
+The model path should match the configuration in creme/hparams/codellama.yaml or creme/hparams/qwen.yaml, e.g.:
+```Python
+model_name: "./models/codellama"
+```
 ## Running an Experiment
 The main script is main.py, which performs the following steps:
 1. Selects an editing task of a given perturbation type (e.g., “A1”)
@@ -60,3 +69,4 @@ Results are written to:
 ```Python
 results/{task_name}/{pert_type}/edit_result.csv
 ```
+
