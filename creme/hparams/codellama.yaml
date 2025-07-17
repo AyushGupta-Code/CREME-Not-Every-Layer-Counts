@@ -1,0 +1,10 @@
+model_name: "../models/codellama"  # the vanilla LLM path  
+device: 0
+layers: []
+num_steps: 20
+lr: 5e-4
+weight_decay: 0
+rewrite_module_tmp: 'model.layers.{}.mlp.down_proj.weight'
+layer_module_tmp: 'model.layers.{}'
+
+
