@@ -28,8 +28,8 @@ def model_editing(pert_type, task_name):
     print(f"=================start deal type : {pert_type}==================")
     print(f"===============task_list : {task_list}=================")
     print("======================================================")
-    dic_path = f"results/{task_name}/{pert_type}"
-    summary_csv = f'results/{task_name}/{pert_type}/edit_result.csv'
+    dic_path=f"results/{task_name}/{pert_type}"
+    summary_csv=f'results/{task_name}/{pert_type}/edit_result.csv'
     os.makedirs(dic_path, exist_ok=True)
     write_csv_header_if_not_exists(summary_csv, [
                                    "task_id", "status", "edit_task", "pass@1", "pass@5", "pass@10", "pass_ratio"])
