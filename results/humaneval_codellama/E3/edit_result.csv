@@ -1,0 +1,10 @@
+task_id,status,edit_task,pass@1,pass@5,pass@10,pass_ratio
+HumanEval/79,edit,HumanEval/79,0.20,0.78,1.00,0.20
+HumanEval/136,edit,HumanEval/79,0.30,0.92,1.00,0.30
+HumanEval/5,edit,HumanEval/79,0.20,0.78,1.00,0.20
+HumanEval/136,edit,HumanEval/136,0.00,0.00,0.00,0.00
+HumanEval/79,edit,HumanEval/136,0.20,0.78,1.00,0.20
+HumanEval/5,edit,HumanEval/136,0.10,0.50,1.00,0.10
+HumanEval/5,edit,HumanEval/5,0.30,0.92,1.00,0.30
+HumanEval/79,edit,HumanEval/5,0.60,1.00,1.00,0.60
+HumanEval/136,edit,HumanEval/5,0.10,0.50,1.00,0.10

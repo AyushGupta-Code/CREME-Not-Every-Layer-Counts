@@ -1,0 +1,17 @@
+task_id,status,edit_task,pass@1,pass@5,pass@10,pass_ratio
+HumanEval/74,edit,HumanEval/74,0.10,0.50,1.00,0.10
+HumanEval/0,edit,HumanEval/74,0.50,1.00,1.00,0.50
+HumanEval/46,edit,HumanEval/74,0.90,1.00,1.00,0.90
+HumanEval/72,edit,HumanEval/74,0.80,1.00,1.00,0.80
+HumanEval/0,edit,HumanEval/0,1.00,1.00,1.00,1.00
+HumanEval/74,edit,HumanEval/0,0.20,0.78,1.00,0.20
+HumanEval/46,edit,HumanEval/0,0.80,1.00,1.00,0.80
+HumanEval/72,edit,HumanEval/0,1.00,1.00,1.00,1.00
+HumanEval/46,edit,HumanEval/46,0.80,1.00,1.00,0.80
+HumanEval/74,edit,HumanEval/46,0.10,0.50,1.00,0.10
+HumanEval/0,edit,HumanEval/46,0.40,0.98,1.00,0.40
+HumanEval/72,edit,HumanEval/46,0.70,1.00,1.00,0.70
+HumanEval/72,edit,HumanEval/72,0.70,1.00,1.00,0.70
+HumanEval/74,edit,HumanEval/72,0.20,0.78,1.00,0.20
+HumanEval/0,edit,HumanEval/72,0.20,0.78,1.00,0.20
+HumanEval/46,edit,HumanEval/72,0.70,1.00,1.00,0.70
