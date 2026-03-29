@@ -38,7 +38,7 @@ def locate_toxic_layer(model, tokenizer, ori_prompt, pert_prompt, layers):
     max_l2 = float('-inf')
     for layer in layers:
         if layer + 1 >= len(hidden_states):
-            print(f"⚠️ Warning: layer {layer} exceeds available layers.")
+            print(f"Warning: layer {layer} exceeds available layers.")
             continue
         h_ori = hidden_states[layer + 1][0]
         h_pert = hidden_states[layer + 1][1]
@@ -47,7 +47,7 @@ def locate_toxic_layer(model, tokenizer, ori_prompt, pert_prompt, layers):
         if l2_dist > max_l2:
             max_l2 = l2_dist
             max_layer = layer
-    print(f"\n✅ Key layer is Layer {max_layer}, the L2 diff is {max_l2:.4f}")
+    print(f"\nKey layer is Layer {max_layer}, the L2 diff is {max_l2:.4f}")
     return max_layer
 
 
@@ -70,7 +70,7 @@ def L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_problem,
     append_row_to_csv(
         summary_csv, [problem["task_id"], "pert", *passk2, acc_pert, None])
     print("\n====================")
-    print(f"🚀 start intervention HumanEval/{task_id} [{pert_type}]...")
+    print(f"Start intervention HumanEval/{task_id} [{pert_type}]...")
     print("====================")
     tokenizer = mt.tok
     tokenizer.padding_side = "left"
@@ -89,7 +89,7 @@ def L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_problem,
     best_pass_rate_layer = []
     best_pass_rate = 0
     for layer in range(mt.num_layers):
-        print(f"\n🔍 Intervention layer {layer} ...")
+        print(f"\nIntervention layer {layer} ...")
 
         def patch_hidden(x, layer_name):
             if layer_name == layername(mt.model, layer):
@@ -97,12 +97,12 @@ def L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_problem,
                     x0 = x[0]
                     if x0.shape[1] > 1:
                         for i in range(1, batch_size + 1):
-                            x0[i] = x0[0].detach().clone()
+                            x0[i, -1, :] = x0[0, -1, :].detach().clone()
                     return (x0,) + x[1:]
                 else:
-                    if x0.shape[1] > 1:
+                    if x.shape[1] > 1:
                         for i in range(1, batch_size + 1):
-                            x[i] = x[0].detach().clone()
+                            x[i, -1, :] = x[0, -1, :].detach().clone()
                     return x
             return x
 
@@ -143,7 +143,7 @@ def L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_problem,
             k_list = [1, 5, 10]
             passk = [pass_at_k(batch_size, c_orig, k) for k in k_list]
 
-            print(f"✅ Layer {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
+            print(f"Layer {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
             if ratio > best_pass_rate:
                 best_pass_rate = ratio
                 best_pass_rate_layer = []
@@ -166,9 +166,9 @@ def L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_problem,
     if best_restore == 0:
         best_layer = best_pass_rate_layer
     print(
-        f"\n✅ Completed intervention, the results are saved to{summary_csv} and {code_json}")
+        f"\nCompleted intervention, the results are saved to {summary_csv} and {code_json}")
     print(
-        f"✅ The key layer is layer {best_layer}; Restoration Improvement:{best_restore:.2f}")
+        f"The key layer is layer {best_layer}; Restoration Improvement:{best_restore:.2f}")
     key_layer = locate_toxic_layer(
         mt.model, mt.tok, orig_prompt, pert_prompt, best_layer)
     return key_layer
@@ -195,7 +195,7 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
     append_row_to_csv(
         summary_csv, [problem["task_id"], "pert", *passk2, acc_pert, None])
     print("\n====================")
-    print(f"🚀 start intervention mbpp:{task_id} [{pert_type}]...")
+    print(f"Start intervention mbpp:{task_id} [{pert_type}]...")
     print("====================")
 
     tokenizer = mt.tok
@@ -217,7 +217,7 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
     best_pass_rate_layer = []
     best_pass_rate = 0
     for layer in range(mt.num_layers):
-        print(f"\n🔍 Intervention layer {layer} ...")
+        print(f"\nIntervention layer {layer} ...")
 
         def patch_hidden(x, layer_name):
             if layer_name == layername(mt.model, layer):
@@ -225,12 +225,12 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
                     x0 = x[0]
                     if x0.shape[1] > 1:
                         for i in range(1, batch_size + 1):
-                            x0[i] = x0[0].detach().clone()
+                            x0[i, -1, :] = x0[0, -1, :].detach().clone()
                     return (x0,) + x[1:]
                 else:
-                    if x0.shape[1] > 1:
+                    if x.shape[1] > 1:
                         for i in range(1, batch_size + 1):
-                            x[i] = x[0].detach().clone()
+                            x[i, -1, :] = x[0, -1, :].detach().clone()
                     return x
             return x
 
@@ -255,7 +255,7 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
                     out[i][input_ids_cutoff:], skip_special_tokens=True)
                 code = filter_code(fix_indents(completion))
                 result = check_correctness_mbpp(
-                    orig_prompt, problem, code, timeout=3.0, completion_id=i)
+                    pert_prompt, pert_problem, code, timeout=3.0, completion_id=i)
                 if result["passed"]:
                     pass_count += 1
                 append_json_record(code_json, {
@@ -272,7 +272,7 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
             k_list = [1, 5, 10]
             passk = [pass_at_k(batch_size, c_orig, k) for k in k_list]
 
-            print(f"✅ layer {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
+            print(f"Layer {layer} pass@1-5-10: {passk}, ratio: {ratio:.2f}")
             if ratio > best_pass_rate:
                 best_pass_rate = ratio
                 best_pass_rate_layer = []
@@ -295,9 +295,9 @@ def mbpp_L2_causal_trace(mt, task_id, dic_path, pert_type, ori_problem, pert_pro
     if best_restore == 0:
         best_layer = best_pass_rate_layer
     print(
-        f"\n✅ Completed intervention, the results are saved to {summary_csv} and {code_json}")
+        f"\nCompleted intervention, the results are saved to {summary_csv} and {code_json}")
     print(
-        f"✅ he key layer is layer {best_layer}; Restoration Improvement: {best_restore:.2f}")
+        f"The key layer is layer {best_layer}; Restoration Improvement: {best_restore:.2f}")
     key_layer = locate_toxic_layer(
         mt.model, mt.tok, orig_prompt, pert_prompt, best_layer)
     return key_layer

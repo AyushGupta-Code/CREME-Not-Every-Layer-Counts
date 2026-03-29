@@ -16,7 +16,7 @@ from creme.edit import apply_my_knowledge_edit_to_model
 import torch
 import os
 import gc
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 def model_editing(pert_type,task_name):
     task_list_instance = TaskList()
     type_case = task_list_instance.get_task_list(task_name)
@@ -104,7 +104,8 @@ def model_editing(pert_type,task_name):
                 print(f"task{task2} result after edit:",acc_edit2,passk4)
         del editor
         del edited_model
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         gc.collect()
         print(f"=== clear {task} ===")
 

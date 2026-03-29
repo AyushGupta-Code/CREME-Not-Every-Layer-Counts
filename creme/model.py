@@ -13,10 +13,19 @@ class ModelLoader:
                  hparams: HyperParams,
                  ):
         self.model_name = hparams.model_name
+        requested_device = getattr(hparams, "device", 0)
+        if torch.cuda.is_available():
+            resolved_device = f"cuda:{requested_device}"
+        else:
+            resolved_device = "cpu"
         if type(self.model_name) is str:
             device_map = None
-            torch_dtype = torch.float16 if hasattr(
-                hparams, 'fp16') and hparams.fp16 else torch.float32
+            use_fp16 = (
+                hasattr(hparams, "fp16")
+                and hparams.fp16
+                and resolved_device.startswith("cuda")
+            )
+            torch_dtype = torch.float16 if use_fp16 else torch.float32
             if 'codellama' in self.model_name.lower():
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name, output_hidden_states=True, torch_dtype=torch_dtype, device_map=device_map)
@@ -31,7 +40,9 @@ class ModelLoader:
                 raise NotImplementedError
         else:
             self.model, self.tok = self.model_name
-        self.model.to(f'cuda:{hparams.device}')
+        self.model.to(resolved_device)
+        self.device = resolved_device
+        hparams.device = resolved_device
         self.hparams = hparams
         self.layer_names = [
             n
