@@ -1,6 +1,7 @@
-model_name: "./models/codellama"  # the vanilla LLM path  
+model_name: "./models/codellama"  # the vanilla LLM path
 device: 0
 layers: []
+target_layer: 28                  # causal layer for proactive fine-tuning
 num_steps: 20
 lr: 5e-4
 weight_decay: 0
