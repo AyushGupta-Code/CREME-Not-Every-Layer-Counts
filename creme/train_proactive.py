@@ -70,6 +70,21 @@ def _get_hidden(model, tokenizer, prompt, layer_name, device, no_grad=True):
     return captured["out"], tokens
 
 
+def _resolve_layer_name(model, target_layer: int) -> str:
+    """Return the hookable module path for a transformer block after wrapping."""
+    candidates = [
+        f"model.layers.{target_layer}",
+        f"base_model.model.model.layers.{target_layer}",
+    ]
+    module_names = {name for name, _ in model.named_modules()}
+    for name in candidates:
+        if name in module_names:
+            return name
+    raise LookupError(
+        f"Could not find target layer {target_layer}. Tried: {candidates}"
+    )
+
+
 def run_proactive_finetuning(
     model,
     tokenizer,
@@ -105,8 +120,6 @@ def run_proactive_finetuning(
         raise ImportError("peft is required: pip install peft accelerate")
 
     device = next(model.parameters()).device
-    layer_name = f"model.layers.{target_layer}"
-
     print(f"Target layer for LoRA + regularization: {target_layer}")
 
     # --- Apply LoRA to down_proj at target_layer only ---
@@ -119,6 +132,7 @@ def run_proactive_finetuning(
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
+    layer_name = _resolve_layer_name(model, target_layer)
 
     # --- Build training pairs ---
     print(f"Building training pairs for {task_name}...")
