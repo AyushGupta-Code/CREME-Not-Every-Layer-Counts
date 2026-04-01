@@ -16,6 +16,47 @@ conda activate creme
 pip install -r requirements.txt
 ```
 
+## Setup & Installation
+
+For Windows users, use the following steps to get Python and the Hugging Face CLI set up correctly before downloading models.
+
+1. Ensure Python 3.10 is installed and available:
+```powershell
+python --version
+```
+2. Install `huggingface_hub` for your user account:
+```powershell
+pip install huggingface_hub --user
+```
+3. Add the user Scripts folder to your `PATH` permanently in PowerShell.
+Replace `<your-username>` with your Windows username:
+```powershell
+[Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\Users\<your-username>\AppData\Roaming\Python\Python310\Scripts", "User")
+```
+4. Close and reopen PowerShell.
+5. Verify the CLI is available:
+```powershell
+hf -h
+```
+6. Log in to Hugging Face and enter your token from `https://huggingface.co/settings/tokens`:
+```powershell
+hf auth login
+```
+
+Note: As of `huggingface_hub` version `1.8.0`, the CLI command changed from `huggingface-cli` to `hf`.
+
+## Common Commands
+
+The Hugging Face CLI now uses `hf` instead of `huggingface-cli`.
+
+| Old command | New command |
+| --- | --- |
+| `huggingface-cli login` | `hf auth login` |
+| `huggingface-cli logout` | `hf auth logout` |
+| `huggingface-cli download` | `hf download` |
+| `huggingface-cli upload` | `hf upload` |
+| `huggingface-cli cache` | `hf cache` |
+
 ---
 
 ## Model Setup
@@ -224,3 +265,9 @@ If C3 mean pass@1 > C2 mean pass@1, the hypothesis is confirmed: causal layer sp
 | Proactive fine-tuning, full run | `python creme/train_proactive.py --num_epochs 1` |
 | Evaluate proactive model, all pert types | `python creme/evaluate_proactive.py --all_pert_types` |
 | Evaluate + compare vs baseline | `python creme/evaluate_proactive.py --all_pert_types --compare` |
+
+
+## Download Codellama from hf
+```
+ hf download meta-llama/CodeLlama-7b-hf --local-dir ./CodeLlama-7b
+ ```
