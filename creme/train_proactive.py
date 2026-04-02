@@ -9,7 +9,7 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from util import nethook
-from util.utils import build_prompt, load_sanitized_mbpp, get_mbpp_problem
+from util.utils import build_prompt, load_sanitized_mbpp, get_mbpp_problem, stream_jsonl
 
 PERT_TYPES = [
     "A1", "A2", "A3",
@@ -94,6 +94,7 @@ def run_proactive_finetuning(
     lambda_reg: float = 0.01,
     num_epochs: int = 1,
     smoke_test: bool = False,
+    pairs_file: str = None,
 ):
     """
     Fine-tune model with:
@@ -135,8 +136,12 @@ def run_proactive_finetuning(
     layer_name = _resolve_layer_name(model, target_layer)
 
     # --- Build training pairs ---
-    print(f"Building training pairs for {task_name}...")
-    pairs = _build_training_pairs(task_name)
+    if pairs_file is not None:
+        print(f"Loading training pairs from {pairs_file}...")
+        pairs = [(r["ori_prompt"], r["pert_prompt"]) for r in stream_jsonl(pairs_file)]
+    else:
+        print(f"Building training pairs for {task_name}...")
+        pairs = _build_training_pairs(task_name)
     if smoke_test:
         pairs = pairs[:5]
         num_epochs = 1
@@ -229,6 +234,7 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_reg", type=float, default=0.01)
     parser.add_argument("--num_epochs", type=int, default=1)
     parser.add_argument("--smoke_test", action="store_true")
+    parser.add_argument("--pairs_file", default=None, help="Path to pre-built JSONL pairs file (e.g. data/training_pairs_C1_C2_C3.jsonl). If set, skips building pairs from scratch.")
     args = parser.parse_args()
 
     hparams = CREMEHyperParams.from_hparams(args.hparams)
@@ -243,4 +249,5 @@ if __name__ == "__main__":
         lambda_reg=args.lambda_reg,
         num_epochs=args.num_epochs,
         smoke_test=args.smoke_test,
+        pairs_file=args.pairs_file,
     )

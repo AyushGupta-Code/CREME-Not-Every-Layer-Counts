@@ -1,3 +1,4 @@
+import os
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
 from util.hparams import HyperParams
@@ -19,6 +20,7 @@ class ModelLoader:
         else:
             resolved_device = "cpu"
         if type(self.model_name) is str:
+            self.model_name = os.path.abspath(self.model_name) if os.path.exists(self.model_name) else self.model_name
             device_map = None
             use_fp16 = (
                 hasattr(hparams, "fp16")

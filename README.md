@@ -32,6 +32,8 @@ pip install huggingface_hub --user
 Replace `<your-username>` with your Windows username:
 ```powershell
 [Environment]::SetEnvironmentVariable("PATH", $env:PATH + ";C:\Users\<your-username>\AppData\Roaming\Python\Python310\Scripts", "User")
+
+$env:PATH = [Environment]::GetEnvironmentVariable("PATH", "User") + ";" + [Environment]::GetEnvironmentVariable("PATH", "Machine")
 ```
 4. Close and reopen PowerShell.
 5. Verify the CLI is available:
