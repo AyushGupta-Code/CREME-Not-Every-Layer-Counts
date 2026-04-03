@@ -12,6 +12,7 @@ import os
 import csv
 import gc
 import sys
+import json
 import torch
 
 # Allow running from project root with `python creme/evaluate_proactive.py`
@@ -24,6 +25,8 @@ from creme.util.utils import (
     build_prompt,
     write_csv_header_if_not_exists,
     append_row_to_csv,
+    generate_batch_completion,
+    check_correctness_mbpp,
 )
 from creme.util import CREMEHyperParams
 from creme.model import ModelLoader
@@ -40,8 +43,25 @@ ALL_PERT_TYPES = [
 
 
 def load_proactive_model(model_path: str, hparams_path: str):
-    """Load proactive model by overriding model_name in hparams."""
+    """Load proactive model or PEFT adapter by overriding model_name in hparams."""
     hparams = CREMEHyperParams.from_hparams(hparams_path)
+    adapter_config_path = os.path.join(model_path, "adapter_config.json")
+    if os.path.exists(adapter_config_path):
+        try:
+            from peft import PeftModel
+        except ImportError as exc:
+            raise ImportError("peft is required to load adapter-only proactive checkpoints") from exc
+        with open(adapter_config_path) as f:
+            adapter_config = json.load(f)
+        base_model_path = adapter_config.get("base_model_name_or_path")
+        if not base_model_path:
+            raise ValueError(f"adapter_config.json in {model_path} is missing base_model_name_or_path")
+        hparams.model_name = base_model_path
+        editor = ModelLoader.from_hparams(hparams)
+        editor.model = PeftModel.from_pretrained(editor.model, model_path)
+        editor.model.eval()
+        return editor
+
     hparams.model_name = model_path
     editor = ModelLoader.from_hparams(hparams)
     return editor
@@ -172,6 +192,144 @@ def load_baseline_results(task_name: str, pert_type: str):
     return rows
 
 
+def load_best_creme_result(task_name: str, pert_type: str, task_id: int):
+    summary_csv = os.path.join("results", task_name, pert_type, "layer_summary.csv")
+    code_json = os.path.join("results", task_name, pert_type, "code_results.json")
+    edit_csv = os.path.join("results", task_name, pert_type, "edit_result.csv")
+    if not os.path.exists(summary_csv) or not os.path.exists(code_json):
+        if not os.path.exists(edit_csv):
+            raise FileNotFoundError(
+                f"Missing CREME result files under results/{task_name}/{pert_type}/"
+            )
+        with open(edit_csv, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if (
+                    str(row.get("task_id")) == str(task_id)
+                    and str(row.get("edit_task")) == str(task_id)
+                ):
+                    return {
+                        "layer": "stored_edit",
+                        "pass@1": float(row.get("pass@1", "nan")),
+                        "pass_ratio": row.get("pass_ratio"),
+                        "completion": "",
+                        "passed": None,
+                        "result": "Detailed completion unavailable; loaded from edit_result.csv",
+                    }
+        raise ValueError(
+            f"No stored edit_result row found for task {task_id} in {edit_csv}"
+        )
+
+    best_row = None
+    with open(summary_csv, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if str(row.get("task_id")) != str(task_id):
+                continue
+            layer = row.get("layer", "")
+            if layer in {"orig", "pert", ""}:
+                continue
+            try:
+                pass_at_1 = float(row.get("pass@1", "nan"))
+            except (TypeError, ValueError):
+                continue
+            if best_row is None or pass_at_1 > best_row["pass@1"]:
+                best_row = {
+                    "layer": layer,
+                    "pass@1": pass_at_1,
+                    "pass_ratio": row.get("pass_ratio"),
+                }
+    if best_row is None:
+        raise ValueError(
+            f"No CREME layer rows found for task {task_id} in {summary_csv}"
+        )
+
+    with open(code_json) as f:
+        entries = json.load(f)
+
+    matching = [
+        entry for entry in entries
+        if str(entry.get("task_id")) == str(task_id)
+        and str(entry.get("layer")) == str(best_row["layer"])
+    ]
+    if not matching:
+        raise ValueError(
+            f"No CREME completions found for task {task_id}, layer {best_row['layer']} in {code_json}"
+        )
+
+    passing = next((entry for entry in matching if entry.get("passed")), None)
+    chosen = passing or matching[0]
+    best_row["completion"] = chosen.get("completion", "").strip()
+    best_row["passed"] = bool(chosen.get("passed"))
+    best_row["result"] = chosen.get("result", {}).get("result") if isinstance(chosen.get("result"), dict) else None
+    return best_row
+
+
+def evaluate_single_task(editor, task_id: int, pert_type: str):
+    ori_problem = get_mbpp_problem(task_id, "data/mbpp/original/mbpp_original.jsonl")
+    pert_problem = get_mbpp_problem(task_id, f"data/mbpp/perturbed/{pert_type}.jsonl")
+    ori_prompt = build_prompt(ori_problem)
+    pert_prompt = build_prompt(pert_problem)
+
+    proactive_completion = generate_batch_completion(
+        editor.model,
+        editor.tok,
+        pert_prompt,
+        batch_size=1,
+    )[0]
+    proactive_result = check_correctness_mbpp(
+        pert_prompt,
+        pert_problem,
+        proactive_completion,
+        timeout=3.0,
+        completion_id=0,
+    )
+    proactive_metrics = evaluate_mbpp_prompt(
+        editor.model,
+        editor.tok,
+        pert_prompt,
+        pert_problem,
+        batch_size=10,
+        num_iterations=1,
+    )
+    return {
+        "ori_prompt": ori_prompt,
+        "pert_prompt": pert_prompt,
+        "proactive_completion": proactive_completion.strip(),
+        "proactive_result": proactive_result,
+        "proactive_pass_ratio": proactive_metrics[0],
+        "proactive_passk": proactive_metrics[1],
+    }
+
+
+def print_single_task_compare(results_task_name: str, pert_type: str, task_id: int, proactive_eval: dict):
+    creme_result = load_best_creme_result(results_task_name, pert_type, task_id)
+    proactive_result = proactive_eval["proactive_result"]
+
+    print("\n" + "=" * 80)
+    print(f"Task {task_id} | pert_type={pert_type}")
+    print("-" * 80)
+    print(
+        f"Stored CREME source: {creme_result['layer']} | "
+        f"pass@1={creme_result['pass@1']:.4f} | passed_sample={creme_result['passed']}"
+    )
+    print(
+        f"Proactive model: pass@1={proactive_eval['proactive_passk'][0]:.4f} | "
+        f"pass_ratio={proactive_eval['proactive_pass_ratio']:.4f} | "
+        f"sample_passed={proactive_result['passed']}"
+    )
+    print("-" * 80)
+    print("Stored CREME completion:")
+    print(creme_result["completion"] or "<not available in stored results>")
+    print("-" * 80)
+    print("Proactive completion:")
+    print(proactive_eval["proactive_completion"] or "<empty>")
+    print("-" * 80)
+    print(f"Stored CREME execution result: {creme_result.get('result')}")
+    print(f"Proactive execution result: {proactive_result.get('result')}")
+    print("=" * 80 + "\n")
+
+
 def print_comparison_table(all_results, task_name: str):
     """Print side-by-side comparison: proactive model vs baseline edit results."""
     from collections import defaultdict
@@ -259,6 +417,18 @@ def main():
         help="After evaluation, print a side-by-side comparison against baseline edit results.",
     )
     parser.add_argument(
+        "--task_id",
+        type=int,
+        default=None,
+        help="Evaluate and compare a single MBPP task id.",
+    )
+    parser.add_argument(
+        "--results_task_name",
+        type=str,
+        default=None,
+        help="Task name used to load stored CREME results from results/<task_name>/<pert_type>/.",
+    )
+    parser.add_argument(
         "--hparams_path",
         type=str,
         default=None,
@@ -278,6 +448,8 @@ def main():
             f"Cannot infer hparams_path from task_name '{args.task_name}'. "
             "Please provide --hparams_path explicitly."
         )
+
+    results_task_name = args.results_task_name or args.task_name
 
     # Determine which pert_types to evaluate
     if args.all_pert_types:
@@ -299,6 +471,34 @@ def main():
     print(f"Loading model from {args.model_path} ...")
     editor = load_proactive_model(args.model_path, hparams_path)
     print("Model loaded.\n")
+
+    if args.task_id is not None:
+        if len(pert_types_to_run) != 1:
+            raise ValueError("--task_id requires exactly one perturbation type. Use --pert_type.")
+        proactive_eval = evaluate_single_task(
+            editor=editor,
+            task_id=args.task_id,
+            pert_type=pert_types_to_run[0],
+        )
+        if args.compare:
+            print_single_task_compare(
+                results_task_name=results_task_name,
+                pert_type=pert_types_to_run[0],
+                task_id=args.task_id,
+                proactive_eval=proactive_eval,
+            )
+        else:
+            print(
+                f"task_id={args.task_id} pert_type={pert_types_to_run[0]} "
+                f"pass@1={proactive_eval['proactive_passk'][0]:.4f} "
+                f"pass_ratio={proactive_eval['proactive_pass_ratio']:.4f} "
+                f"sample_passed={proactive_eval['proactive_result']['passed']}"
+            )
+        del editor
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        return
 
     all_results = []
 
@@ -325,7 +525,7 @@ def main():
 
     # Optional comparison against baseline
     if args.compare:
-        print_comparison_table(all_results, args.task_name)
+        print_comparison_table(all_results, results_task_name)
 
     # Cleanup
     del editor

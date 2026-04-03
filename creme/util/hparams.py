@@ -44,6 +44,10 @@ class CREMEHyperParams(HyperParams):
     device: int
     model_name: str
     target_layer: int = -1
+    dtype: str = None
+    load_in_4bit: bool = False
+    bnb_4bit_quant_type: str = "nf4"
+    bnb_4bit_use_double_quant: bool = True
 
     @classmethod
     def from_hparams(cls, hparams_name_or_path: str):

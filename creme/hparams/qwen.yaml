@@ -1,6 +1,11 @@
 model_name: "./models/qwencoder"  # the vanilla LLM path  
 device: 0
+dtype: "bfloat16"
+load_in_4bit: true
+bnb_4bit_quant_type: "nf4"
+bnb_4bit_use_double_quant: true
 layers: []
+target_layer: 27
 num_steps: 20
 lr: 5e-4
 weight_decay: 0

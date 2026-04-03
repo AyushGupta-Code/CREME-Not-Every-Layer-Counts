@@ -20,6 +20,24 @@ PERT_TYPES = [
 ]
 
 
+def _resolve_pairs_file(pairs_file: str) -> str:
+    if pairs_file is None or os.path.exists(pairs_file):
+        return pairs_file
+    root, ext = os.path.splitext(pairs_file)
+    candidates = []
+    if ext == ".json":
+        candidates.append(root + ".jsonl")
+    elif ext == ".jsonl":
+        candidates.append(root + ".json")
+    else:
+        candidates.extend([pairs_file + ".jsonl", pairs_file + ".json"])
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            print(f"Pairs file {pairs_file} not found; using {candidate} instead.")
+            return candidate
+    raise FileNotFoundError(f"Could not find pairs file: {pairs_file}")
+
+
 def _build_training_pairs(task_name: str) -> list:
     """
     Build (ori_prompt, pert_prompt) pairs from all MBPP tasks × all pert_types.
@@ -72,6 +90,13 @@ def _get_hidden(model, tokenizer, prompt, layer_name, device, no_grad=True):
 
 def _resolve_layer_name(model, target_layer: int) -> str:
     """Return the hookable module path for a transformer block after wrapping."""
+    if target_layer < 0:
+        candidates = []
+        base_layers = getattr(getattr(model, "model", None), "layers", None)
+        if base_layers is None and hasattr(model, "base_model"):
+            base_layers = getattr(getattr(getattr(model.base_model, "model", None), "model", None), "layers", None)
+        if base_layers is not None:
+            target_layer = len(base_layers) + target_layer
     candidates = [
         f"model.layers.{target_layer}",
         f"base_model.model.model.layers.{target_layer}",
@@ -116,12 +141,26 @@ def run_proactive_finetuning(
         smoke_test:   If True, only use 5 pairs and 1 epoch for a quick sanity check.
     """
     try:
-        from peft import get_peft_model, LoraConfig
+        from peft import get_peft_model, LoraConfig, prepare_model_for_kbit_training
     except ImportError:
         raise ImportError("peft is required: pip install peft accelerate")
 
     device = next(model.parameters()).device
+    if target_layer < 0:
+        base_layers = getattr(getattr(model, "model", None), "layers", None)
+        if base_layers is None:
+            raise ValueError("target_layer is negative and the model layer stack could not be resolved")
+        target_layer = len(base_layers) + target_layer
+    if target_layer < 0:
+        raise ValueError(f"Resolved target_layer is invalid: {target_layer}")
     print(f"Target layer for LoRA + regularization: {target_layer}")
+    model.config.use_cache = False
+    if hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    if getattr(model, "is_loaded_in_4bit", False) or getattr(model, "is_loaded_in_8bit", False):
+        model = prepare_model_for_kbit_training(model)
 
     # --- Apply LoRA to down_proj at target_layer only ---
     lora_config = LoraConfig(
@@ -130,6 +169,7 @@ def run_proactive_finetuning(
         lora_alpha=16,
         lora_dropout=0.05,
         bias="none",
+        task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
@@ -137,6 +177,7 @@ def run_proactive_finetuning(
 
     # --- Build training pairs ---
     if pairs_file is not None:
+        pairs_file = _resolve_pairs_file(pairs_file)
         print(f"Loading training pairs from {pairs_file}...")
         pairs = [(r["ori_prompt"], r["pert_prompt"]) for r in stream_jsonl(pairs_file)]
     else:
@@ -160,7 +201,7 @@ def run_proactive_finetuning(
         total_reg = 0.0
 
         for step, (ori_prompt, pert_prompt) in enumerate(pairs):
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
 
             # --- Clean hidden state: no grad (anchor) ---
             h_clean, tokens_clean = _get_hidden(
