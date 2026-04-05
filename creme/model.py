@@ -1,3 +1,4 @@
+import json
 import os
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoModel
@@ -28,13 +29,39 @@ class ModelLoader:
                 and resolved_device.startswith("cuda")
             )
             torch_dtype = torch.float16 if use_fp16 else torch.float32
-            if 'codellama' in self.model_name.lower():
+
+            # Detect PEFT/LoRA adapter: load base model first, then attach adapter
+            adapter_config_path = os.path.join(self.model_name, "adapter_config.json")
+            if os.path.exists(adapter_config_path):
+                try:
+                    from peft import PeftModel
+                except ImportError:
+                    raise ImportError("peft is required to load LoRA adapters: pip install peft")
+
+                with open(adapter_config_path) as f:
+                    adapter_cfg = json.load(f)
+                base_model_path = adapter_cfg["base_model_name_or_path"]
+                print(f"Detected LoRA adapter. Loading base model from: {base_model_path}")
+
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    base_model_path, output_hidden_states=True, torch_dtype=torch_dtype, device_map=device_map)
+                self.tok = AutoTokenizer.from_pretrained(self.model_name)
+                self.tok.pad_token_id = self.tok.eos_token_id
+
+                print(f"Attaching LoRA adapter from: {self.model_name}")
+                # Keep as PeftModel — do NOT merge. merge_and_unload() changes the forward
+                # pass in ways that break generation (all-zero outputs). PeftModel.generate()
+                # works transparently for inference.
+                self.model = PeftModel.from_pretrained(self.model, self.model_name, is_trainable=False)
+                print("LoRA adapter attached (inference mode).")
+
+            elif 'codellama' in self.model_name.lower():
                 self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name, output_hidden_states=True, torch_dtype=torch_dtype, device_map=device_map)
                 self.tok = AutoTokenizer.from_pretrained(self.model_name)
                 self.tok.pad_token_id = self.tok.eos_token_id
             elif 'qwen' in self.model_name.lower():
-                self.model = self.model = AutoModelForCausalLM.from_pretrained(
+                self.model = AutoModelForCausalLM.from_pretrained(
                     self.model_name, output_hidden_states=True, torch_dtype=torch_dtype, device_map=device_map)
                 self.tok = AutoTokenizer.from_pretrained(self.model_name)
                 self.tok.pad_token_id = self.tok.eos_token_id
@@ -49,6 +76,6 @@ class ModelLoader:
         self.layer_names = [
             n
             for n, m in self.model.named_modules()
-            if re.match(r"^(transformer|gpt_neox|model\.layers)\.\d+$", n)
+            if re.match(r"^(transformer|gpt_neox|model\.layers|base_model\.model\.model\.layers)\.\d+$", n)
         ]
         self.num_layers = len(self.layer_names)

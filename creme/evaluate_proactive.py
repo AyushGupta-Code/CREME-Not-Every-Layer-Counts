@@ -226,8 +226,8 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="./models/codellama_proactive",
-        help="Path to the proactive fine-tuned model (default: ./models/codellama_proactive)",
+        default="./models/codellama_proactive_C1_C2_C3",
+        help="Path to the proactive fine-tuned model (default: ./models/codellama_proactive_C1_C2_C3)",
     )
     parser.add_argument(
         "--task_name",
