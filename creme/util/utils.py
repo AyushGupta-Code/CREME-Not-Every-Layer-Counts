@@ -6,6 +6,7 @@ from math import comb
 import signal
 import multiprocessing
 import contextlib
+import threading
 from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
@@ -23,6 +24,23 @@ if project_root not in sys.path:
 
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+
+def _run_in_thread_with_timeout(fn, timeout: float) -> str:
+    result = {"status": "timeout"}
+
+    def target():
+        try:
+            result["status"] = fn()
+        except BaseException as exc:
+            result["status"] = f"failed: {exc}"
+
+    thread = threading.Thread(target=target, daemon=True)
+    thread.start()
+    thread.join(timeout + 1)
+    if thread.is_alive():
+        return "timeout"
+    return result["status"]
 
 
 @contextlib.contextmanager
@@ -169,7 +187,7 @@ def check_correctness(problem: Dict, completion: str, timeout: float,
         the results later even if execution finishes asynchronously.
     """
 
-    def unsafe_execute():
+    def unsafe_execute(result_queue):
 
         with create_tempdir():
 
@@ -191,31 +209,61 @@ def check_correctness(problem: Dict, completion: str, timeout: float,
                 with swallow_io():
                     with time_limit(timeout):
                         exec(check_program, exec_globals)
-                result.append("passed")
+                result_queue.put("passed")
             except TimeoutException:
-                result.append("timed out")
+                result_queue.put("timed out")
             except BaseException as e:
-                result.append(f"failed: {e}")
+                result_queue.put(f"failed: {e}")
             shutil.rmtree = rmtree
             os.rmdir = rmdir
             os.chdir = chdir
 
-    manager = multiprocessing.Manager()
-    result = manager.list()
+    if os.name == "nt":
+        def run_once():
+            with create_tempdir():
 
-    p = multiprocessing.Process(target=unsafe_execute)
-    p.start()
-    p.join(timeout=timeout + 1)
-    if p.is_alive():
-        p.kill()
+                import os
+                import shutil
+                rmtree = shutil.rmtree
+                rmdir = os.rmdir
+                chdir = os.chdir
+                reliability_guard()
 
-    if not result:
-        result.append("timed out")
+                check_program = (
+                    problem["prompt"] + completion + "\n" +
+                    problem["test"] + "\n" +
+                    f"check({problem['entry_point']})"
+                )
+
+                try:
+                    exec_globals = {}
+                    with swallow_io():
+                        exec(check_program, exec_globals)
+                    return "passed"
+                except BaseException as e:
+                    return f"failed: {e}"
+                finally:
+                    shutil.rmtree = rmtree
+                    os.rmdir = rmdir
+                    os.chdir = chdir
+
+        result = _run_in_thread_with_timeout(run_once, timeout)
+    else:
+        result_queue = multiprocessing.Queue()
+        p = multiprocessing.Process(target=unsafe_execute, args=(result_queue,))
+        p.start()
+        p.join(timeout=timeout + 1)
+        if p.is_alive():
+            p.kill()
+
+        result = "timed out"
+        if not result_queue.empty():
+            result = result_queue.get()
     # print(result)
     return dict(
         task_id=problem["task_id"],
-        passed=result[0] == "passed",
-        result=result[0],
+        passed=result == "passed",
+        result=result,
         completion_id=completion_id,
     )
 
@@ -233,7 +281,7 @@ def check_correctness_mbpp(prompt: str, example: dict, completion: str, timeout,
         dict: {task_id, passed (bool), result (str), completion (str)}
     """
 
-    def _evaluate(result_container):
+    def _evaluate(result_queue):
         try:
             exec_globals = {}
             code = '\n'.join(example['test_imports']) + '\n'+prompt+'\n' + "    " + \
@@ -242,20 +290,38 @@ def check_correctness_mbpp(prompt: str, example: dict, completion: str, timeout,
             # print(code)
             with swallow_io(), time_limit(timeout):
                 exec(code, exec_globals)
-            result_container.append("passed")
+            result_queue.put("passed")
         except TimeoutException:
-            result_container.append("timeout")
+            result_queue.put("timeout")
         except Exception as e:
-            result_container.append(f"failed: {e}")
+            result_queue.put(f"failed: {e}")
 
-    result = multiprocessing.Manager().list()
-    p = multiprocessing.Process(target=_evaluate, args=(result,))
-    p.start()
-    p.join(timeout + 1)
-    if p.is_alive():
-        p.kill()
-        result.append("timeout")
-    status = result[0] if result else "timeout"
+    if os.name == "nt":
+        def run_once():
+            try:
+                exec_globals = {}
+                code = '\n'.join(example['test_imports']) + '\n'+prompt+'\n' + "    " + \
+                    completion.strip() + '\n' + \
+                    '\n'.join(example['test_list']).strip()
+                with swallow_io():
+                    exec(code, exec_globals)
+                return "passed"
+            except Exception as e:
+                return f"failed: {e}"
+
+        status = _run_in_thread_with_timeout(run_once, timeout)
+    else:
+        result_queue = multiprocessing.Queue()
+        p = multiprocessing.Process(target=_evaluate, args=(result_queue,))
+        p.start()
+        p.join(timeout + 1)
+        if p.is_alive():
+            p.kill()
+            status = "timeout"
+        elif not result_queue.empty():
+            status = result_queue.get()
+        else:
+            status = "timeout"
     return {
         "task_id": example.get("task_id", -1),
         "completion": completion,
@@ -267,6 +333,10 @@ def check_correctness_mbpp(prompt: str, example: dict, completion: str, timeout,
 
 @contextlib.contextmanager
 def time_limit(seconds: float):
+    if not hasattr(signal, "setitimer") or not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
     def signal_handler(signum, frame):
         raise TimeoutException("Timed out!")
     signal.setitimer(signal.ITIMER_REAL, seconds)

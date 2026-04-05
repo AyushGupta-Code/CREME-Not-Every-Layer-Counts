@@ -43,6 +43,7 @@ class CREMEHyperParams(HyperParams):
     layer_module_tmp: str
     device: int
     model_name: str
+    target_layer: int = -1
 
     @classmethod
     def from_hparams(cls, hparams_name_or_path: str):

@@ -13,10 +13,11 @@ from creme.util import CREMEHyperParams
 from creme.model import ModelLoader
 from creme.causal_trace import L2_causal_trace,mbpp_L2_causal_trace
 from creme.edit import apply_my_knowledge_edit_to_model
+from creme.train_proactive import run_proactive_finetuning
 import torch
 import os
 import gc
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
 def model_editing(pert_type,task_name):
     task_list_instance = TaskList()
     type_case = task_list_instance.get_task_list(task_name)
@@ -29,6 +30,8 @@ def model_editing(pert_type,task_name):
     summary_csv=f'results/{task_name}/{pert_type}/edit_result.csv'
     os.makedirs(dic_path, exist_ok=True)
     write_csv_header_if_not_exists(summary_csv, ["task_id", "status","edit_task", "pass@1", "pass@5", "pass@10", "pass_ratio"])
+    proactive_done = False
+    proactive_save_path = None
     for task in task_list:
         print(f"\n=== start task {task} ===")
         if "codellama" in task_name:
@@ -80,6 +83,20 @@ def model_editing(pert_type,task_name):
                 key_layer=mbpp_L2_causal_trace(editor,task,dic_path,pert_type,ori_problem,pert_problem,batch_size=10, num_iterations=1)
                 editor.hparams.layers = [key_layer]
                 print("find key layer:",key_layer)
+            if not proactive_done:
+                target_layer = editor.hparams.layers[0]
+                model_type = "codellama" if "codellama" in task_name else "qwen"
+                proactive_save_path = f"./models/{model_type}_proactive"
+                print(f"\n=== Running proactive fine-tuning at layer {target_layer} ===")
+                run_proactive_finetuning(
+                    model=editor.model,
+                    tokenizer=editor.tok,
+                    target_layer=target_layer,
+                    task_name=task_name,
+                    save_path=proactive_save_path,
+                )
+                proactive_done = True
+                print(f"=== Proactive fine-tuning complete, model saved to {proactive_save_path} ===\n")
             edited_model, weights_copy = apply_my_knowledge_edit_to_model(
                 editor.model,
                 editor.tok,
@@ -104,7 +121,8 @@ def model_editing(pert_type,task_name):
                 print(f"task{task2} result after edit:",acc_edit2,passk4)
         del editor
         del edited_model
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         gc.collect()
         print(f"=== clear {task} ===")
 
