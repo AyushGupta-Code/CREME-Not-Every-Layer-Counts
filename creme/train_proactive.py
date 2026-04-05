@@ -2,6 +2,7 @@ import os
 import sys
 import torch
 import torch.nn.functional as F
+from torch.cuda.amp import GradScaler, autocast
 
 # Ensure creme/ is on path (mirrors utils.py pattern)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -70,6 +71,50 @@ def _get_hidden(model, tokenizer, prompt, layer_name, device, no_grad=True):
     return captured["out"], tokens
 
 
+def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=True, amp_dtype=None):
+    """Capture hidden states for a batch of prompts (padded left for decoder-only)."""
+    tokenizer.padding_side = "left"
+    tokens = tokenizer(
+        prompts,
+        return_tensors="pt",
+        truncation=True,
+        max_length=512,
+        padding=True,
+    ).to(device)
+
+    captured = {}
+
+    def capture_output(x, lname):
+        captured["out"] = x[0] if isinstance(x, tuple) else x
+        return x
+
+    if no_grad:
+        with torch.no_grad():
+            if amp_dtype is not None:
+                with autocast(dtype=amp_dtype):
+                    with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+                        model(**tokens)
+            else:
+                with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+                    model(**tokens)
+    else:
+        if amp_dtype is not None:
+            with autocast(dtype=amp_dtype):
+                with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+                    model(**tokens)
+        else:
+            with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+                model(**tokens)
+
+    return captured["out"], tokens
+
+
+def _masked_mean(hidden, attention_mask):
+    """Mean-pool hidden states over non-padding tokens."""
+    mask = attention_mask.unsqueeze(-1).float()  # (B, T, 1)
+    return (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+
+
 def _resolve_layer_name(model, target_layer: int) -> str:
     """Return the hookable module path for a transformer block after wrapping."""
     candidates = [
@@ -95,6 +140,10 @@ def run_proactive_finetuning(
     num_epochs: int = 1,
     smoke_test: bool = False,
     pairs_file: str = None,
+    batch_size: int = 4,
+    grad_accum_steps: int = 1,
+    use_bf16: bool = False,
+    use_fp16: bool = False,
 ):
     """
     Fine-tune model with:
@@ -106,14 +155,18 @@ def run_proactive_finetuning(
     All other weights are frozen.
 
     Args:
-        model:        The loaded HuggingFace model (already on device).
-        tokenizer:    Corresponding tokenizer.
-        target_layer: Index of the causal layer identified in Step 1.
-        task_name:    e.g. "mbpp_codellama" — used to select training data.
-        save_path:    Directory to save the fine-tuned model after each epoch.
-        lambda_reg:   Weight for the representation alignment loss.
-        num_epochs:   Number of full passes over training pairs.
-        smoke_test:   If True, only use 5 pairs and 1 epoch for a quick sanity check.
+        model:             The loaded HuggingFace model (already on device).
+        tokenizer:         Corresponding tokenizer.
+        target_layer:      Index of the causal layer identified in Step 1.
+        task_name:         e.g. "mbpp_codellama" — used to select training data.
+        save_path:         Directory to save the fine-tuned model after each epoch.
+        lambda_reg:        Weight for the representation alignment loss.
+        num_epochs:        Number of full passes over training pairs.
+        smoke_test:        If True, only use 5 pairs and 1 epoch for a quick sanity check.
+        batch_size:        Number of pairs per forward pass (default 4).
+        grad_accum_steps:  Accumulate gradients over N batches before optimizer step (default 1).
+        use_bf16:          Enable bfloat16 mixed precision (recommended for Ampere+).
+        use_fp16:          Enable float16 mixed precision (use if bf16 not supported).
     """
     try:
         from peft import get_peft_model, LoraConfig
@@ -122,6 +175,21 @@ def run_proactive_finetuning(
 
     device = next(model.parameters()).device
     print(f"Target layer for LoRA + regularization: {target_layer}")
+    print(f"Batch size: {batch_size} | Grad accum steps: {grad_accum_steps} "
+          f"| Effective batch: {batch_size * grad_accum_steps}")
+
+    # --- Mixed precision setup ---
+    amp_dtype = None
+    scaler = None
+    if use_bf16 and torch.cuda.is_bf16_supported():
+        amp_dtype = torch.bfloat16
+        print("Mixed precision: bfloat16")
+    elif use_fp16:
+        amp_dtype = torch.float16
+        scaler = GradScaler()
+        print("Mixed precision: float16 (with GradScaler)")
+    else:
+        print("Mixed precision: disabled (full fp32)")
 
     # --- Apply LoRA to down_proj at target_layer only ---
     lora_config = LoraConfig(
@@ -153,54 +221,89 @@ def run_proactive_finetuning(
         weight_decay=0.01,
     )
 
+    # Helper: make batches of size batch_size
+    def _make_batches(data, size):
+        for i in range(0, len(data), size):
+            yield data[i: i + size]
+
+    global_step = 0
+    num_batches = (len(pairs) + batch_size - 1) // batch_size
+
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0.0
         total_ce = 0.0
         total_reg = 0.0
 
-        for step, (ori_prompt, pert_prompt) in enumerate(pairs):
-            optimizer.zero_grad()
+        optimizer.zero_grad()
 
-            # --- Clean hidden state: no grad (anchor) ---
-            h_clean, tokens_clean = _get_hidden(
-                model, tokenizer, ori_prompt, layer_name, device, no_grad=True
+        for batch_idx, batch in enumerate(_make_batches(pairs, batch_size)):
+            ori_prompts = [p[0] for p in batch]
+            pert_prompts = [p[1] for p in batch]
+
+            # --- Clean hidden states: no grad (anchor) ---
+            h_clean, tokens_clean = _get_hidden_batch(
+                model, tokenizer, ori_prompts, layer_name, device,
+                no_grad=True, amp_dtype=amp_dtype,
             )
 
-            # --- CE loss on clean prompt ---
-            outputs = model(**tokens_clean, labels=tokens_clean["input_ids"])
-            L_ce = outputs.loss
+            # --- CE loss on clean prompts (mask padding in labels) ---
+            labels = tokens_clean["input_ids"].clone()
+            labels[tokens_clean["attention_mask"] == 0] = -100
 
-            # --- Perturbed hidden state: with grad ---
-            h_pert, _ = _get_hidden(
-                model, tokenizer, pert_prompt, layer_name, device, no_grad=False
+            if amp_dtype is not None:
+                with autocast(dtype=amp_dtype):
+                    outputs = model(**tokens_clean, labels=labels)
+                    L_ce = outputs.loss
+            else:
+                outputs = model(**tokens_clean, labels=labels)
+                L_ce = outputs.loss
+
+            # --- Perturbed hidden states: with grad ---
+            h_pert, tokens_pert = _get_hidden_batch(
+                model, tokenizer, pert_prompts, layer_name, device,
+                no_grad=False, amp_dtype=amp_dtype,
             )
 
-            # --- Representation alignment loss ---
-            # .detach() on h_clean is non-negotiable: prevents collapse
-            L_reg = 1 - F.cosine_similarity(
-                h_pert.mean(dim=1),
-                h_clean.detach().mean(dim=1),
-                dim=-1,
-            ).mean()
+            # --- Representation alignment loss (masked mean pooling) ---
+            h_clean_pooled = _masked_mean(h_clean.detach().float(), tokens_clean["attention_mask"])
+            h_pert_pooled = _masked_mean(h_pert.float(), tokens_pert["attention_mask"])
+            L_reg = 1 - F.cosine_similarity(h_pert_pooled, h_clean_pooled, dim=-1).mean()
 
-            loss = L_ce + lambda_reg * L_reg
-            loss.backward()
-            optimizer.step()
+            loss = (L_ce + lambda_reg * L_reg) / grad_accum_steps
 
-            total_loss += loss.item()
+            if scaler is not None:
+                scaler.scale(loss).backward()
+            else:
+                loss.backward()
+
+            # Track unscaled loss for logging
+            total_loss += (L_ce.item() + lambda_reg * L_reg.item())
             total_ce += L_ce.item()
             total_reg += L_reg.item()
 
-            if (step + 1) % 50 == 0:
+            # --- Optimizer step every grad_accum_steps batches ---
+            is_last_batch = (batch_idx + 1) == num_batches
+            if (batch_idx + 1) % grad_accum_steps == 0 or is_last_batch:
+                if scaler is not None:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad()
+                global_step += 1
+
+            if (batch_idx + 1) % 50 == 0 or is_last_batch:
+                step_loss = L_ce.item() + lambda_reg * L_reg.item()
                 print(
-                    f"Epoch {epoch+1} | Step {step+1}/{len(pairs)} | "
-                    f"loss={loss.item():.4f} L_ce={L_ce.item():.4f} L_reg={L_reg.item():.4f}"
+                    f"Epoch {epoch+1} | Batch {batch_idx+1}/{num_batches} | "
+                    f"loss={step_loss:.4f} L_ce={L_ce.item():.4f} L_reg={L_reg.item():.4f}"
                 )
 
-        avg_loss = total_loss / len(pairs)
-        avg_ce = total_ce / len(pairs)
-        avg_reg = total_reg / len(pairs)
+        n = num_batches
+        avg_loss = total_loss / n
+        avg_ce = total_ce / n
+        avg_reg = total_reg / n
         print(
             f"Epoch {epoch+1} complete | avg_loss={avg_loss:.4f} "
             f"avg_L_ce={avg_ce:.4f} avg_L_reg={avg_reg:.4f}"
@@ -234,7 +337,18 @@ if __name__ == "__main__":
     parser.add_argument("--lambda_reg", type=float, required=True, help="Weight for representation alignment loss (e.g. 0.01).")
     parser.add_argument("--num_epochs", type=int, required=True, help="Number of training epochs.")
     parser.add_argument("--smoke_test", action="store_true", help="Run with 5 pairs and 1 epoch for a quick sanity check.")
-    parser.add_argument("--pairs_file", default=None, help="Path to pre-built JSONL pairs file (e.g. data/training_pairs_C1_C2_C3.jsonl). If set, skips building pairs from scratch.")
+    parser.add_argument("--pairs_file", default=None,
+                        help="Path to pre-built JSONL pairs file. If set, skips building pairs from scratch.")
+    # GPU utilization knobs
+    parser.add_argument("--batch_size", type=int, default=4,
+                        help="Pairs per forward pass (default 4). Increase to saturate GPU.")
+    parser.add_argument("--grad_accum_steps", type=int, default=1,
+                        help="Accumulate gradients over N batches before optimizer step.")
+    precision = parser.add_mutually_exclusive_group()
+    precision.add_argument("--bf16", action="store_true",
+                           help="Use bfloat16 mixed precision (recommended for RTX 6000 Ada).")
+    precision.add_argument("--fp16", action="store_true",
+                           help="Use float16 mixed precision with GradScaler.")
     args = parser.parse_args()
 
     hparams = CREMEHyperParams.from_hparams(args.hparams)
@@ -250,4 +364,8 @@ if __name__ == "__main__":
         num_epochs=args.num_epochs,
         smoke_test=args.smoke_test,
         pairs_file=args.pairs_file,
+        batch_size=args.batch_size,
+        grad_accum_steps=args.grad_accum_steps,
+        use_bf16=args.bf16,
+        use_fp16=args.fp16,
     )

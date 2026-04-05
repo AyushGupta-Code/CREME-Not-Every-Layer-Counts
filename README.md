@@ -170,13 +170,15 @@ The causal layer for CodeLLaMA-7B on MBPP is pre-set to **layer 28** in `creme/h
 Choose a descriptive `--save_path` for your model — the name does not need to follow any convention and won't affect evaluation.
 
 ```bash
-# CodeLLaMA on MBPP
+# CodeLLaMA on MBPP (recommended — uses batching and bf16 for RTX 6000 Ada / Ampere+)
 python creme/train_proactive.py \
     --hparams ./creme/hparams/codellama.yaml \
     --task_name mbpp_codellama \
     --save_path ./models/<your_run_name> \
     --lambda_reg 0.01 \
-    --num_epochs 5
+    --num_epochs 5 \
+    --batch_size 8 \
+    --bf16
 
 # QwenCoder on MBPP
 python creme/train_proactive.py \
@@ -184,10 +186,26 @@ python creme/train_proactive.py \
     --task_name mbpp_qwen \
     --save_path ./models/<your_run_name> \
     --lambda_reg 0.01 \
-    --num_epochs 5
+    --num_epochs 5 \
+    --batch_size 8 \
+    --bf16
 ```
 
-For a quick sanity check before a full run (only `--smoke_test` has a default — it's a flag):
+**GPU utilization flags** (all optional, defaults shown):
+
+| Flag | Default | Description |
+|---|---|---|
+| `--batch_size` | `4` | Pairs per forward pass. Increase to saturate GPU (try 8 or 16). |
+| `--grad_accum_steps` | `1` | Accumulate gradients over N batches before stepping. Effective batch = `batch_size × grad_accum_steps`. |
+| `--bf16` | off | bfloat16 mixed precision — recommended for Ampere+ GPUs (RTX 6000 Ada, A100, etc.). Halves activation memory. |
+| `--fp16` | off | float16 mixed precision with GradScaler — use if bf16 is not supported. |
+
+If you hit OOM with `--batch_size 8`, either lower to `--batch_size 4` or keep effective batch size the same via accumulation:
+```bash
+--batch_size 4 --grad_accum_steps 2   # same effective batch of 8, less peak memory
+```
+
+For a quick sanity check before a full run (`--smoke_test` uses 5 pairs, 1 epoch):
 
 ```bash
 python creme/train_proactive.py \
@@ -196,6 +214,8 @@ python creme/train_proactive.py \
     --save_path ./models/<your_run_name> \
     --lambda_reg 0.01 \
     --num_epochs 1 \
+    --batch_size 8 \
+    --bf16 \
     --smoke_test
 ```
 
@@ -296,7 +316,9 @@ python creme/train_proactive.py \
     --task_name mbpp_codellama \
     --save_path ./models/<model_name>_random_layer \
     --lambda_reg 0.01 \
-    --num_epochs 5
+    --num_epochs 5 \
+    --batch_size 8 \
+    --bf16
 ```
 
 **Evaluate C2:**
@@ -321,8 +343,8 @@ If C3 mean pass@1 > C2 mean pass@1, the hypothesis is confirmed: causal layer sp
 | Goal | Command |
 |------|---------|
 | Reactive CREME, MBPP + CodeLLaMA, pert A1 | `python main.py` (set last line) |
-| Proactive fine-tuning, full run | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 5` |
-| Proactive fine-tuning, smoke test | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 1 --smoke_test` |
+| Proactive fine-tuning, full run | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 5 --batch_size 8 --bf16` |
+| Proactive fine-tuning, smoke test | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 1 --batch_size 8 --bf16 --smoke_test` |
 | Evaluate proactive model, single pert type | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --pert_type A1` |
 | Evaluate proactive model, all pert types | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --all_pert_types` |
 | Evaluate + compare vs baseline | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --all_pert_types --compare` |
