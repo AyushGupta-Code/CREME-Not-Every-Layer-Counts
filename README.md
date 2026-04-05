@@ -167,22 +167,39 @@ The causal layer for CodeLLaMA-7B on MBPP is pre-set to **layer 28** in `creme/h
 
 ### Step 2: Run proactive fine-tuning (standalone)
 
+Choose a descriptive `--save_path` for your model — the name does not need to follow any convention and won't affect evaluation.
+
+```bash
+# CodeLLaMA on MBPP
+python creme/train_proactive.py \
+    --hparams ./creme/hparams/codellama.yaml \
+    --task_name mbpp_codellama \
+    --save_path ./models/<your_run_name> \
+    --lambda_reg 0.01 \
+    --num_epochs 5
+
+# QwenCoder on MBPP
+python creme/train_proactive.py \
+    --hparams ./creme/hparams/qwen.yaml \
+    --task_name mbpp_qwen \
+    --save_path ./models/<your_run_name> \
+    --lambda_reg 0.01 \
+    --num_epochs 5
+```
+
+For a quick sanity check before a full run (only `--smoke_test` has a default — it's a flag):
+
 ```bash
 python creme/train_proactive.py \
     --hparams ./creme/hparams/codellama.yaml \
     --task_name mbpp_codellama \
-    --save_path ./models/codellama_proactive \
+    --save_path ./models/<your_run_name> \
     --lambda_reg 0.01 \
-    --num_epochs 1
+    --num_epochs 1 \
+    --smoke_test
 ```
 
-For a quick sanity check before a full run:
-
-```bash
-python creme/train_proactive.py --smoke_test
-```
-
-Checkpoints are saved to `./models/codellama_proactive/epoch_N/` after each epoch and a final merged model to `./models/codellama_proactive/`.
+The fine-tuner saves a LoRA adapter (not full weights) to `--save_path`. Checkpoints are written after each epoch to `--save_path/epoch_N/`. The `evaluate_proactive.py` script automatically detects and loads LoRA adapters — no merging step required.
 
 **Or**, run via the integrated pipeline — `main.py` automatically triggers proactive fine-tuning once after the causal layer is found for the first task:
 
@@ -192,31 +209,66 @@ python main.py   # fine-tuning runs once, then reactive editing proceeds as usua
 
 ### Step 3: Evaluate the proactive model
 
+Pass `--model_path` to any saved model or LoRA adapter directory. The script infers the correct hparams from the path or `--task_name` automatically. Use `--output_tag` to label the results directory for the run.
+
 ```bash
-# Single perturbation type
+# Single perturbation type — CodeLLaMA
 python creme/evaluate_proactive.py \
-    --model_path ./models/codellama_proactive \
+    --model_path ./models/<your_run_name> \
     --task_name mbpp_codellama \
+    --hparams_path ./creme/hparams/codellama.yaml \
+    --condition proactive \
+    --output_tag proactive \
     --pert_type A1
 
-# All 18 perturbation types
+# All 18 perturbation types — CodeLLaMA
 python creme/evaluate_proactive.py \
-    --model_path ./models/codellama_proactive \
+    --model_path ./models/<your_run_name> \
     --task_name mbpp_codellama \
+    --hparams_path ./creme/hparams/codellama.yaml \
+    --condition proactive \
+    --output_tag proactive \
     --all_pert_types
 
 # With side-by-side comparison against reactive CREME baseline
 python creme/evaluate_proactive.py \
-    --model_path ./models/codellama_proactive \
+    --model_path ./models/<your_run_name> \
     --task_name mbpp_codellama \
+    --hparams_path ./creme/hparams/codellama.yaml \
+    --condition proactive \
+    --output_tag proactive \
     --all_pert_types \
     --compare
+
+# QwenCoder
+python creme/evaluate_proactive.py \
+    --model_path ./models/<your_qwen_run_name> \
+    --task_name mbpp_qwen \
+    --hparams_path ./creme/hparams/qwen.yaml \
+    --condition proactive \
+    --output_tag proactive \
+    --all_pert_types
 ```
+
+**Key CLI arguments:**
+
+| Argument | Required | Description |
+|---|---|---|
+| `--model_path` | Yes | Path to fine-tuned model or LoRA adapter directory |
+| `--task_name` | Yes | Task key (e.g. `mbpp_codellama`, `mbpp_qwen`) |
+| `--hparams_path` | Yes | Path to hparams YAML |
+| `--condition` | Yes | Label written to CSV for this run (e.g. `proactive`, `random`) |
+| `--output_tag` | Yes | Suffix for the results directory (e.g. `proactive`) |
+| `--pert_type` | * | Single pert type to evaluate (e.g. `A1`) |
+| `--all_pert_types` | * | Evaluate all 18 pert types |
+| `--compare` | No | Print side-by-side vs reactive baseline after eval |
+
+*One of `--pert_type` or `--all_pert_types` is required.
 
 ### Output
 
 ```
-results/{task_name}_proactive/{pert_type}/
+results/{task_name}_{output_tag}/{pert_type}/
 └── eval_results.csv     # task_id, condition, pass@1/5/10, pass_ratio, pert_type
                          # includes both perturbed and original prompt rows
 ```
@@ -232,24 +284,30 @@ To validate that the causal layer (not arbitrary regularization) drives the impr
 | Condition | Description | Command |
 |-----------|-------------|---------|
 | C1: Baseline | Reactive CREME results | Already in `results/` after Step 1 |
-| C2: Random layer | Proactive fine-tuning at layer 3 | See below |
-| C3: Causal layer | Proactive fine-tuning at layer 28 | Step 2 above |
+| C2: Random layer | Proactive fine-tuning at a non-causal layer | See below |
+| C3: Causal layer | Proactive fine-tuning at the identified causal layer | Step 2 above |
 
 **Train C2 (random layer):**
 
 ```bash
-# Temporarily set target_layer: 3 in codellama.yaml, then:
+# Temporarily set target_layer: 3 in the hparams YAML, then:
 python creme/train_proactive.py \
-    --save_path ./models/codellama_random_layer \
-    --lambda_reg 0.01
+    --hparams ./creme/hparams/codellama.yaml \
+    --task_name mbpp_codellama \
+    --save_path ./models/<model_name>_random_layer \
+    --lambda_reg 0.01 \
+    --num_epochs 5
 ```
 
 **Evaluate C2:**
 
 ```bash
 python creme/evaluate_proactive.py \
-    --model_path ./models/codellama_random_layer \
+    --model_path ./models/<model_name>_random_layer \
+    --task_name mbpp_codellama \
+    --hparams_path ./creme/hparams/codellama.yaml \
     --condition random \
+    --output_tag random \
     --all_pert_types \
     --compare
 ```
@@ -263,10 +321,11 @@ If C3 mean pass@1 > C2 mean pass@1, the hypothesis is confirmed: causal layer sp
 | Goal | Command |
 |------|---------|
 | Reactive CREME, MBPP + CodeLLaMA, pert A1 | `python main.py` (set last line) |
-| Proactive fine-tuning, smoke test | `python creme/train_proactive.py --smoke_test` |
-| Proactive fine-tuning, full run | `python creme/train_proactive.py --num_epochs 1` |
-| Evaluate proactive model, all pert types | `python creme/evaluate_proactive.py --all_pert_types` |
-| Evaluate + compare vs baseline | `python creme/evaluate_proactive.py --all_pert_types --compare` |
+| Proactive fine-tuning, full run | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 5` |
+| Proactive fine-tuning, smoke test | `python creme/train_proactive.py --hparams <yaml> --task_name <task> --save_path <path> --lambda_reg 0.01 --num_epochs 1 --smoke_test` |
+| Evaluate proactive model, single pert type | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --pert_type A1` |
+| Evaluate proactive model, all pert types | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --all_pert_types` |
+| Evaluate + compare vs baseline | `python creme/evaluate_proactive.py --model_path <path> --task_name <task> --hparams_path <yaml> --condition proactive --output_tag proactive --all_pert_types --compare` |
 
 
 ## Download Codellama from hf

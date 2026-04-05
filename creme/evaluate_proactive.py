@@ -221,63 +221,59 @@ def print_comparison_table(all_results, task_name: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate the proactively fine-tuned model on MBPP perturbations."
+        description="Evaluate a proactively fine-tuned model on MBPP perturbations."
     )
     parser.add_argument(
         "--model_path",
         type=str,
-        default="./models/codellama_proactive_C1_C2_C3",
-        help="Path to the proactive fine-tuned model (default: ./models/codellama_proactive_C1_C2_C3)",
+        required=True,
+        help="Path to the fine-tuned model or LoRA adapter directory (e.g. ./models/codellama_proactive_C1_C2_C3).",
     )
     parser.add_argument(
         "--task_name",
         type=str,
-        default="mbpp_codellama",
-        help="Task name key in TaskList (e.g. mbpp_codellama, mbpp_codellama_proactive)",
+        required=True,
+        help="Task name key in TaskList (e.g. mbpp_codellama, mbpp_qwen).",
+    )
+    parser.add_argument(
+        "--condition",
+        type=str,
+        required=True,
+        help="Label written to the results CSV to identify this run (e.g. proactive, random, causal).",
+    )
+    parser.add_argument(
+        "--output_tag",
+        type=str,
+        required=True,
+        help="Tag appended to task_name for the output directory. "
+             "Results go to results/{task_name}_{output_tag}/{pert_type}/eval_results.csv",
+    )
+    parser.add_argument(
+        "--hparams_path",
+        type=str,
+        required=True,
+        help="Path to hparams YAML (e.g. ./creme/hparams/codellama.yaml).",
     )
     parser.add_argument(
         "--pert_type",
         type=str,
         default=None,
-        help="Single perturbation type to evaluate (e.g. A1). Ignored when --all_pert_types is set.",
-    )
-    parser.add_argument(
-        "--condition",
-        type=str,
-        default="proactive",
-        choices=["causal", "random", "baseline", "proactive"],
-        help="Condition label written to the results CSV (default: proactive)",
+        help="Single perturbation type to evaluate (e.g. A1). Mutually exclusive with --all_pert_types.",
     )
     parser.add_argument(
         "--all_pert_types",
         action="store_true",
-        help="Loop over all 18 perturbation types automatically.",
+        help="Loop over all 18 perturbation types automatically. Mutually exclusive with --pert_type.",
     )
     parser.add_argument(
         "--compare",
         action="store_true",
         help="After evaluation, print a side-by-side comparison against baseline edit results.",
     )
-    parser.add_argument(
-        "--hparams_path",
-        type=str,
-        default=None,
-        help="Path to hparams YAML. Inferred from task_name if not provided.",
-    )
     args = parser.parse_args()
 
-    # Infer hparams path
-    if args.hparams_path is not None:
-        hparams_path = args.hparams_path
-    elif "codellama" in args.task_name.lower():
-        hparams_path = "./creme/hparams/codellama.yaml"
-    elif "qwen" in args.task_name.lower():
-        hparams_path = "./creme/hparams/qwen.yaml"
-    else:
-        raise ValueError(
-            f"Cannot infer hparams_path from task_name '{args.task_name}'. "
-            "Please provide --hparams_path explicitly."
-        )
+    hparams_path = args.hparams_path
+    output_tag = args.output_tag
 
     # Determine which pert_types to evaluate
     if args.all_pert_types:
@@ -307,7 +303,7 @@ def main():
         print(f"  pert_type: {pert_type}")
         print(f"{'='*60}")
 
-        output_dir = os.path.join("results", f"{args.task_name}_proactive", pert_type)
+        output_dir = os.path.join("results", f"{args.task_name}_{output_tag}", pert_type)
 
         results = evaluate_one_pert_type(
             editor=editor,

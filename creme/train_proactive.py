@@ -228,12 +228,12 @@ if __name__ == "__main__":
     from util.hparams import CREMEHyperParams
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--hparams", default="./creme/hparams/codellama.yaml")
-    parser.add_argument("--task_name", default="mbpp_codellama")
-    parser.add_argument("--save_path", default="./models/codellama_proactive")
-    parser.add_argument("--lambda_reg", type=float, default=0.01)
-    parser.add_argument("--num_epochs", type=int, default=1)
-    parser.add_argument("--smoke_test", action="store_true")
+    parser.add_argument("--hparams", required=True, help="Path to hparams YAML (e.g. ./creme/hparams/codellama.yaml).")
+    parser.add_argument("--task_name", required=True, help="Task name key (e.g. mbpp_codellama, mbpp_qwen).")
+    parser.add_argument("--save_path", required=True, help="Directory to save the fine-tuned LoRA adapter (e.g. ./models/codellama_proactive_C1_C2_C3).")
+    parser.add_argument("--lambda_reg", type=float, required=True, help="Weight for representation alignment loss (e.g. 0.01).")
+    parser.add_argument("--num_epochs", type=int, required=True, help="Number of training epochs.")
+    parser.add_argument("--smoke_test", action="store_true", help="Run with 5 pairs and 1 epoch for a quick sanity check.")
     parser.add_argument("--pairs_file", default=None, help="Path to pre-built JSONL pairs file (e.g. data/training_pairs_C1_C2_C3.jsonl). If set, skips building pairs from scratch.")
     args = parser.parse_args()
 
