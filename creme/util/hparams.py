@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from dataclasses import asdict
 from typing import List
+from typing import Optional
 import yaml
 
 
@@ -44,6 +45,7 @@ class CREMEHyperParams(HyperParams):
     device: int
     model_name: str
     target_layer: int = -1
+    target_layers: Optional[List[int]] = None
     dtype: str = None
     load_in_4bit: bool = False
     bnb_4bit_quant_type: str = "nf4"

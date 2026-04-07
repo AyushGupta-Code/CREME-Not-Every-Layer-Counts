@@ -159,11 +159,11 @@ Train the model once with a representation alignment regularizer so it is robust
 
 **Loss:** `L_total = L_ce + λ · L_reg`
 - `L_ce` — cross-entropy on the clean prompt
-- `L_reg = 1 − cosine_similarity(h_pert, h_clean.detach())` at the causal layer
+- `L_reg = 1 − cosine_similarity(h_pert, h_clean.detach())` at the selected causal layers
 
 ### Step 1: Confirm the causal layer
 
-The causal layer for CodeLLaMA-7B on MBPP is pre-set to **layer 28** in `creme/hparams/codellama.yaml`. To rediscover it empirically, run the reactive pipeline on 15–20 tasks and take the mode of the returned key layers.
+The causal layer for CodeLLaMA-7B on MBPP is often **layer 28**, but this repo now supports selecting multiple layers for direct fine-tuning. The default CodeLLaMA MBPP config uses the top three layers from `results/key_layer/key_layer_results.csv`: **[28, 30, 8]**.
 
 ### Step 2: Run proactive fine-tuning (standalone)
 
@@ -176,13 +176,34 @@ python creme/train_proactive.py \
     --num_epochs 1
 ```
 
+This path now performs direct fine-tuning on the selected transformer blocks and does not create LoRA adapters.
+
+To override the layers manually:
+
+```bash
+python creme/train_proactive.py \
+    --task_name mbpp_codellama \
+    --target_layers 28 30 8 \
+    --save_path ./models/codellama_proactive
+```
+
+To derive the top 3 layers automatically from the saved results CSV:
+
+```bash
+python creme/train_proactive.py \
+    --task_name mbpp_codellama \
+    --top_k_from_results 3 \
+    --results_csv results/key_layer/key_layer_results.csv \
+    --save_path ./models/codellama_proactive
+```
+
 For a quick sanity check before a full run:
 
 ```bash
 python creme/train_proactive.py --smoke_test
 ```
 
-Checkpoints are saved to `./models/codellama_proactive/epoch_N/` after each epoch and a final merged model to `./models/codellama_proactive/`.
+Checkpoints are saved to `./models/codellama_proactive/epoch_N/` after each epoch and a final full model to `./models/codellama_proactive/`.
 
 **Or**, run via the integrated pipeline — `main.py` automatically triggers proactive fine-tuning once after the causal layer is found for the first task:
 
@@ -238,7 +259,7 @@ To validate that the causal layer (not arbitrary regularization) drives the impr
 **Train C2 (random layer):**
 
 ```bash
-# Temporarily set target_layer: 3 in codellama.yaml, then:
+# Temporarily set target_layers: [3] in codellama.yaml, then:
 python creme/train_proactive.py \
     --save_path ./models/codellama_random_layer \
     --lambda_reg 0.01

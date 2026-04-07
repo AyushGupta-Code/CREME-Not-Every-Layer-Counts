@@ -62,13 +62,13 @@ class ModelLoader:
             )
             device_map = {"": resolved_device} if resolved_device.startswith("cuda") and has_accelerate else None
             common_kwargs = {
-                "dtype": torch_dtype,
+                "torch_dtype": torch_dtype,
                 "low_cpu_mem_usage": True,
             }
             if device_map is not None:
                 common_kwargs["device_map"] = device_map
             if use_4bit:
-                common_kwargs.pop("dtype", None)
+                common_kwargs.pop("torch_dtype", None)
                 common_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch_dtype,

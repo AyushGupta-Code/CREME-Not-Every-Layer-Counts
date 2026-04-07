@@ -1,4 +1,3 @@
-
 from creme.task_list import TaskList
 from creme.util.utils import (
     evaluate_prompt,
@@ -84,14 +83,15 @@ def model_editing(pert_type,task_name):
                 editor.hparams.layers = [key_layer]
                 print("find key layer:",key_layer)
             if not proactive_done:
-                target_layer = editor.hparams.layers[0]
+                target_layers = getattr(editor.hparams, "target_layers", None) or [editor.hparams.layers[0]]
                 model_type = "codellama" if "codellama" in task_name else "qwen"
                 proactive_save_path = f"./models/{model_type}_proactive"
-                print(f"\n=== Running proactive fine-tuning at layer {target_layer} ===")
+                print(f"\n=== Running proactive fine-tuning on layers {target_layers} ===")
                 run_proactive_finetuning(
                     model=editor.model,
                     tokenizer=editor.tok,
-                    target_layer=target_layer,
+                    target_layer=editor.hparams.layers[0],
+                    target_layers=target_layers,
                     task_name=task_name,
                     save_path=proactive_save_path,
                 )

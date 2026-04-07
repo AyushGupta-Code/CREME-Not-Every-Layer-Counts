@@ -6,6 +6,7 @@ bnb_4bit_quant_type: "nf4"
 bnb_4bit_use_double_quant: true
 layers: []
 target_layer: 27
+target_layers: [17, 26, 13]
 num_steps: 20
 lr: 5e-4
 weight_decay: 0
