@@ -2,7 +2,7 @@ import os
 import sys
 import torch
 import torch.nn.functional as F
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 # Ensure creme/ is on path (mirrors utils.py pattern)
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -91,7 +91,7 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=Tru
     if no_grad:
         with torch.no_grad():
             if amp_dtype is not None:
-                with autocast(dtype=amp_dtype):
+                with autocast("cuda", dtype=amp_dtype):
                     with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                         model(**tokens)
             else:
@@ -99,7 +99,7 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=Tru
                     model(**tokens)
     else:
         if amp_dtype is not None:
-            with autocast(dtype=amp_dtype):
+            with autocast("cuda", dtype=amp_dtype):
                 with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                     model(**tokens)
         else:
@@ -137,6 +137,7 @@ def run_proactive_finetuning(
     task_name: str,
     save_path: str,
     lambda_reg: float = 0.01,
+    lr: float = 1e-5,
     num_epochs: int = 1,
     smoke_test: bool = False,
     pairs_file: str = None,
@@ -161,6 +162,7 @@ def run_proactive_finetuning(
         task_name:         e.g. "mbpp_codellama" — used to select training data.
         save_path:         Directory to save the fine-tuned model after each epoch.
         lambda_reg:        Weight for the representation alignment loss.
+        lr:                Learning rate for AdamW (default 1e-5; 5e-5 is too aggressive for single-layer LoRA).
         num_epochs:        Number of full passes over training pairs.
         smoke_test:        If True, only use 5 pairs and 1 epoch for a quick sanity check.
         batch_size:        Number of pairs per forward pass (default 4).
@@ -183,10 +185,11 @@ def run_proactive_finetuning(
     scaler = None
     if use_bf16 and torch.cuda.is_bf16_supported():
         amp_dtype = torch.bfloat16
-        print("Mixed precision: bfloat16")
+        model = model.to(torch.bfloat16)   # native bf16 — avoids fp32 weight / bf16 grad mismatch
+        print("Mixed precision: bfloat16 (model cast natively)")
     elif use_fp16:
         amp_dtype = torch.float16
-        scaler = GradScaler()
+        scaler = GradScaler("cuda")
         print("Mixed precision: float16 (with GradScaler)")
     else:
         print("Mixed precision: disabled (full fp32)")
@@ -215,9 +218,10 @@ def run_proactive_finetuning(
         num_epochs = 1
     print(f"Training pairs: {len(pairs)}")
 
+    print(f"Learning rate: {lr}")
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr=5e-5,
+        lr=lr,
         weight_decay=0.01,
     )
 
@@ -252,7 +256,7 @@ def run_proactive_finetuning(
             labels[tokens_clean["attention_mask"] == 0] = -100
 
             if amp_dtype is not None:
-                with autocast(dtype=amp_dtype):
+                with autocast("cuda", dtype=amp_dtype):
                     outputs = model(**tokens_clean, labels=labels)
                     L_ce = outputs.loss
             else:
@@ -286,9 +290,12 @@ def run_proactive_finetuning(
             is_last_batch = (batch_idx + 1) == num_batches
             if (batch_idx + 1) % grad_accum_steps == 0 or is_last_batch:
                 if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                     optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
@@ -335,6 +342,8 @@ if __name__ == "__main__":
     parser.add_argument("--task_name", required=True, help="Task name key (e.g. mbpp_codellama, mbpp_qwen).")
     parser.add_argument("--save_path", required=True, help="Directory to save the fine-tuned LoRA adapter (e.g. ./models/codellama_proactive_C1_C2_C3).")
     parser.add_argument("--lambda_reg", type=float, required=True, help="Weight for representation alignment loss (e.g. 0.01).")
+    parser.add_argument("--lr", type=float, default=1e-5,
+                        help="Learning rate for AdamW (default 1e-5).")
     parser.add_argument("--num_epochs", type=int, required=True, help="Number of training epochs.")
     parser.add_argument("--smoke_test", action="store_true", help="Run with 5 pairs and 1 epoch for a quick sanity check.")
     parser.add_argument("--pairs_file", default=None,
@@ -361,6 +370,7 @@ if __name__ == "__main__":
         task_name=args.task_name,
         save_path=args.save_path,
         lambda_reg=args.lambda_reg,
+        lr=args.lr,
         num_epochs=args.num_epochs,
         smoke_test=args.smoke_test,
         pairs_file=args.pairs_file,
