@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python analyze_results.py --results_dir results/mbpp_codellama_proactive)"
+    ]
+  }
+}

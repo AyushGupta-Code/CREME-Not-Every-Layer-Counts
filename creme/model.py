@@ -28,7 +28,14 @@ class ModelLoader:
                 and hparams.fp16
                 and resolved_device.startswith("cuda")
             )
-            torch_dtype = torch.float16 if use_fp16 else torch.float32
+            # torch_dtype = torch.float16 if use_fp16 else torch.float32
+
+            if use_fp16:
+                torch_dtype = torch.float16
+            elif resolved_device.startswith("cuda") and torch.cuda.is_bf16_supported():
+                torch_dtype = torch.bfloat16  # load natively in bf16 — halves VRAM, no precision loss
+            else:
+                torch_dtype = torch.float32
 
             # Detect PEFT/LoRA adapter: load base model first, then attach adapter
             adapter_config_path = os.path.join(self.model_name, "adapter_config.json")
