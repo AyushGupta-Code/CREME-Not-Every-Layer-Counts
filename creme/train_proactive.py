@@ -2,7 +2,6 @@ import os
 import sys
 import torch
 import torch.nn.functional as F
-# from torch.cuda.amp import GradScaler, autocast
 from torch.amp import GradScaler, autocast
 
 # Ensure creme/ is on path (mirrors utils.py pattern)
@@ -94,18 +93,16 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_names, device, no_grad=Tr
     if no_grad:
         with torch.no_grad():
             if amp_dtype is not None:
-                # with autocast(dtype=amp_dtype):
                 with autocast("cuda", dtype=amp_dtype):
-                    with nethook.TraceDict(model, layer_names, edit_output=capture_output):
+                    with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                         model(**tokens)
             else:
                 with nethook.TraceDict(model, layer_names, edit_output=capture_output):
                     model(**tokens)
     else:
         if amp_dtype is not None:
-            # with autocast(dtype=amp_dtype):
             with autocast("cuda", dtype=amp_dtype):
-                with nethook.TraceDict(model, layer_names, edit_output=capture_output):
+                with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                     model(**tokens)
         else:
             with nethook.TraceDict(model, layer_names, edit_output=capture_output):
@@ -198,6 +195,7 @@ def run_proactive_finetuning(
         train_mode:        "lora" for adapter tuning, "full" to train target weights directly.
         target_layers:     Optional list of layer indices to train together; defaults to [target_layer].
         lambda_reg:        Weight for the representation alignment loss.
+        lr:                Learning rate for AdamW (default 1e-5; 5e-5 is too aggressive for single-layer LoRA).
         num_epochs:        Number of full passes over training pairs.
         smoke_test:        If True, only use 5 pairs and 1 epoch for a quick sanity check.
         batch_size:        Number of pairs per forward pass (default 4).
@@ -269,6 +267,7 @@ def run_proactive_finetuning(
         num_epochs = 1
     print(f"Training pairs: {len(pairs)}")
 
+    print(f"Learning rate: {lr}")
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=lr,
@@ -306,7 +305,6 @@ def run_proactive_finetuning(
             labels[tokens_clean["attention_mask"] == 0] = -100
 
             if amp_dtype is not None:
-                # with autocast(dtype=amp_dtype):
                 with autocast("cuda", dtype=amp_dtype):
                     outputs = model(**tokens_clean, labels=labels)
                     L_ce = outputs.loss
@@ -407,6 +405,8 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-5,
                         help="Learning rate for AdamW (default 1e-5).")
     parser.add_argument("--lambda_reg", type=float, required=True, help="Weight for representation alignment loss (e.g. 0.01).")
+    parser.add_argument("--lr", type=float, default=1e-5,
+                        help="Learning rate for AdamW (default 1e-5).")
     parser.add_argument("--num_epochs", type=int, required=True, help="Number of training epochs.")
     parser.add_argument("--smoke_test", action="store_true", help="Run with 5 pairs and 1 epoch for a quick sanity check.")
     parser.add_argument("--pairs_file", default=None,
