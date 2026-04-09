@@ -1,0 +1,13 @@
+task_id,condition,n_samples,avg_pass@1,avg_pass@5,avg_pass@10,avg_pass_ratio
+162,proactive,1,0.5,1.0,1.0,0.5
+162,proactive_original,1,0.9,1.0,1.0,0.9
+446,proactive,1,1.0,1.0,1.0,1.0
+446,proactive_original,1,0.9,1.0,1.0,0.9
+593,proactive,1,0.1,0.5,1.0,0.1
+593,proactive_original,1,0.4,0.98,1.0,0.4
+607,proactive,1,1.0,1.0,1.0,1.0
+607,proactive_original,1,1.0,1.0,1.0,1.0
+632,proactive,1,0.4,0.98,1.0,0.4
+632,proactive_original,1,0.4,0.98,1.0,0.4
+764,proactive,1,0.6,1.0,1.0,0.6
+764,proactive_original,1,0.4,0.98,1.0,0.4

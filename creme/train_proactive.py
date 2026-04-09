@@ -71,8 +71,8 @@ def _get_hidden(model, tokenizer, prompt, layer_name, device, no_grad=True):
     return captured["out"], tokens
 
 
-def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=True, amp_dtype=None):
-    """Capture hidden states for a batch of prompts (padded left for decoder-only)."""
+def _get_hidden_batch(model, tokenizer, prompts, layer_names, device, no_grad=True, amp_dtype=None):
+    """Capture hidden states for one or more layers for a batch of prompts."""
     tokenizer.padding_side = "left"
     tokens = tokenizer(
         prompts,
@@ -82,10 +82,12 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=Tru
         padding=True,
     ).to(device)
 
+    if isinstance(layer_names, str):
+        layer_names = [layer_names]
     captured = {}
 
     def capture_output(x, lname):
-        captured["out"] = x[0] if isinstance(x, tuple) else x
+        captured[lname] = x[0] if isinstance(x, tuple) else x
         return x
 
     if no_grad:
@@ -95,7 +97,7 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=Tru
                     with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                         model(**tokens)
             else:
-                with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+                with nethook.TraceDict(model, layer_names, edit_output=capture_output):
                     model(**tokens)
     else:
         if amp_dtype is not None:
@@ -103,10 +105,12 @@ def _get_hidden_batch(model, tokenizer, prompts, layer_name, device, no_grad=Tru
                 with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
                     model(**tokens)
         else:
-            with nethook.TraceDict(model, [layer_name], edit_output=capture_output):
+            with nethook.TraceDict(model, layer_names, edit_output=capture_output):
                 model(**tokens)
 
-    return captured["out"], tokens
+    if len(layer_names) == 1:
+        return captured[layer_names[0]], tokens
+    return captured, tokens
 
 
 def _masked_mean(hidden, attention_mask):
@@ -130,12 +134,38 @@ def _resolve_layer_name(model, target_layer: int) -> str:
     )
 
 
+def _resolve_target_module_name(model, target_layer: int) -> str:
+    """Return the trainable module path for the selected layer."""
+    candidates = [
+        f"model.layers.{target_layer}.mlp.down_proj",
+        f"base_model.model.model.layers.{target_layer}.mlp.down_proj",
+    ]
+    module_names = {name for name, _ in model.named_modules()}
+    for name in candidates:
+        if name in module_names:
+            return name
+    raise LookupError(
+        f"Could not find target module for layer {target_layer}. Tried: {candidates}"
+    )
+
+
+def _parse_target_layers(target_layer: int, target_layers=None):
+    """Normalize CLI/YAML layer selection into a non-empty list of ints."""
+    if target_layers is None:
+        return [target_layer]
+    if isinstance(target_layers, str):
+        target_layers = [int(layer.strip()) for layer in target_layers.split(",") if layer.strip()]
+    return [int(layer) for layer in target_layers]
+
+
 def run_proactive_finetuning(
     model,
     tokenizer,
     target_layer: int,
     task_name: str,
     save_path: str,
+    train_mode: str = "lora",
+    target_layers=None,
     lambda_reg: float = 0.01,
     lr: float = 1e-5,
     num_epochs: int = 1,
@@ -152,7 +182,8 @@ def run_proactive_finetuning(
         L_ce  = cross-entropy on clean prompt
         L_reg = 1 - cosine_similarity(h_pert, h_clean.detach(), dim=-1).mean()
 
-    LoRA is applied only to model.layers.{target_layer}.mlp.down_proj.
+    In `lora` mode, LoRA is applied only to model.layers.{target_layer}.mlp.down_proj.
+    In `full` mode, the original down_proj weights at the selected layer(s) are trained directly.
     All other weights are frozen.
 
     Args:
@@ -161,6 +192,8 @@ def run_proactive_finetuning(
         target_layer:      Index of the causal layer identified in Step 1.
         task_name:         e.g. "mbpp_codellama" — used to select training data.
         save_path:         Directory to save the fine-tuned model after each epoch.
+        train_mode:        "lora" for adapter tuning, "full" to train target weights directly.
+        target_layers:     Optional list of layer indices to train together; defaults to [target_layer].
         lambda_reg:        Weight for the representation alignment loss.
         lr:                Learning rate for AdamW (default 1e-5; 5e-5 is too aggressive for single-layer LoRA).
         num_epochs:        Number of full passes over training pairs.
@@ -170,13 +203,10 @@ def run_proactive_finetuning(
         use_bf16:          Enable bfloat16 mixed precision (recommended for Ampere+).
         use_fp16:          Enable float16 mixed precision (use if bf16 not supported).
     """
-    try:
-        from peft import get_peft_model, LoraConfig
-    except ImportError:
-        raise ImportError("peft is required: pip install peft accelerate")
-
+    target_layers = _parse_target_layers(target_layer, target_layers)
     device = next(model.parameters()).device
-    print(f"Target layer for LoRA + regularization: {target_layer}")
+    print(f"Target layers for proactive fine-tuning: {target_layers}")
+    print(f"Training mode: {train_mode}")
     print(f"Batch size: {batch_size} | Grad accum steps: {grad_accum_steps} "
           f"| Effective batch: {batch_size * grad_accum_steps}")
 
@@ -194,17 +224,36 @@ def run_proactive_finetuning(
     else:
         print("Mixed precision: disabled (full fp32)")
 
-    # --- Apply LoRA to down_proj at target_layer only ---
-    lora_config = LoraConfig(
-        target_modules=[f"model.layers.{target_layer}.mlp.down_proj"],
-        r=8,
-        lora_alpha=16,
-        lora_dropout=0.05,
-        bias="none",
-    )
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()
-    layer_name = _resolve_layer_name(model, target_layer)
+    if train_mode == "lora":
+        if len(target_layers) != 1:
+            raise ValueError("LoRA mode currently supports exactly one target layer. Use --train_mode full for multiple layers.")
+        try:
+            from peft import get_peft_model, LoraConfig
+        except ImportError:
+            raise ImportError("peft is required for --train_mode lora: pip install peft accelerate")
+
+        # --- Apply LoRA to down_proj at target_layer only ---
+        lora_config = LoraConfig(
+            target_modules=[f"model.layers.{target_layers[0]}.mlp.down_proj"],
+            r=8,
+            lora_alpha=16,
+            lora_dropout=0.05,
+            bias="none",
+        )
+        model = get_peft_model(model, lora_config)
+        model.print_trainable_parameters()
+    elif train_mode == "full":
+        target_module_names = [_resolve_target_module_name(model, layer) for layer in target_layers]
+        for _, param in model.named_parameters():
+            param.requires_grad = False
+        for name, param in model.named_parameters():
+            if any(name.startswith(f"{module_name}.") for module_name in target_module_names):
+                param.requires_grad = True
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Training original weights in {target_module_names} ({trainable_params:,} trainable params)")
+    else:
+        raise ValueError(f"Unsupported train_mode: {train_mode}")
+    layer_names = [_resolve_layer_name(model, layer) for layer in target_layers]
 
     # --- Build training pairs ---
     if pairs_file is not None:
@@ -247,7 +296,7 @@ def run_proactive_finetuning(
 
             # --- Clean hidden states: no grad (anchor) ---
             h_clean, tokens_clean = _get_hidden_batch(
-                model, tokenizer, ori_prompts, layer_name, device,
+                model, tokenizer, ori_prompts, layer_names, device,
                 no_grad=True, amp_dtype=amp_dtype,
             )
 
@@ -265,14 +314,22 @@ def run_proactive_finetuning(
 
             # --- Perturbed hidden states: with grad ---
             h_pert, tokens_pert = _get_hidden_batch(
-                model, tokenizer, pert_prompts, layer_name, device,
+                model, tokenizer, pert_prompts, layer_names, device,
                 no_grad=False, amp_dtype=amp_dtype,
             )
 
             # --- Representation alignment loss (masked mean pooling) ---
-            h_clean_pooled = _masked_mean(h_clean.detach().float(), tokens_clean["attention_mask"])
-            h_pert_pooled = _masked_mean(h_pert.float(), tokens_pert["attention_mask"])
-            L_reg = 1 - F.cosine_similarity(h_pert_pooled, h_clean_pooled, dim=-1).mean()
+            if isinstance(h_clean, dict):
+                reg_losses = []
+                for layer_name in layer_names:
+                    h_clean_pooled = _masked_mean(h_clean[layer_name].detach().float(), tokens_clean["attention_mask"])
+                    h_pert_pooled = _masked_mean(h_pert[layer_name].float(), tokens_pert["attention_mask"])
+                    reg_losses.append(1 - F.cosine_similarity(h_pert_pooled, h_clean_pooled, dim=-1).mean())
+                L_reg = torch.stack(reg_losses).mean()
+            else:
+                h_clean_pooled = _masked_mean(h_clean.detach().float(), tokens_clean["attention_mask"])
+                h_pert_pooled = _masked_mean(h_pert.float(), tokens_pert["attention_mask"])
+                L_reg = 1 - F.cosine_similarity(h_pert_pooled, h_clean_pooled, dim=-1).mean()
 
             loss = (L_ce + lambda_reg * L_reg) / grad_accum_steps
 
@@ -340,7 +397,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--hparams", required=True, help="Path to hparams YAML (e.g. ./creme/hparams/codellama.yaml).")
     parser.add_argument("--task_name", required=True, help="Task name key (e.g. mbpp_codellama, mbpp_qwen).")
-    parser.add_argument("--save_path", required=True, help="Directory to save the fine-tuned LoRA adapter (e.g. ./models/codellama_proactive_C1_C2_C3).")
+    parser.add_argument("--save_path", required=True, help="Directory to save the fine-tuned model checkpoint (e.g. ./models/codellama_proactive_C1_C2_C3).")
+    parser.add_argument("--train_mode", choices=["lora", "full"], default="lora",
+                        help="Training mode: 'lora' keeps the existing adapter path, 'full' trains the target layer weights directly.")
+    parser.add_argument("--target_layers", default=None,
+                        help="Optional comma-separated layer list for full tuning, e.g. 28,30. Defaults to target_layer from the hparams YAML.")
+    parser.add_argument("--lr", type=float, default=1e-5,
+                        help="Learning rate for AdamW (default 1e-5).")
     parser.add_argument("--lambda_reg", type=float, required=True, help="Weight for representation alignment loss (e.g. 0.01).")
     parser.add_argument("--lr", type=float, default=1e-5,
                         help="Learning rate for AdamW (default 1e-5).")
@@ -369,6 +432,8 @@ if __name__ == "__main__":
         target_layer=hparams.target_layer,
         task_name=args.task_name,
         save_path=args.save_path,
+        train_mode=args.train_mode,
+        target_layers=args.target_layers,
         lambda_reg=args.lambda_reg,
         lr=args.lr,
         num_epochs=args.num_epochs,
