@@ -1,0 +1,9 @@
+task_id,condition,pass@1,pass@5,pass@10,pass_ratio,pert_type
+69,baseline,0.20,0.78,1.00,0.20,P2
+69,baseline_original,0.00,0.00,0.00,0.00,P2
+79,baseline,1.00,1.00,1.00,1.00,P2
+79,baseline_original,0.90,1.00,1.00,0.90,P2
+97,baseline,0.00,0.00,0.00,0.00,P2
+97,baseline_original,0.60,1.00,1.00,0.60,P2
+108,baseline,0.40,0.98,1.00,0.40,P2
+108,baseline_original,0.50,1.00,1.00,0.50,P2
