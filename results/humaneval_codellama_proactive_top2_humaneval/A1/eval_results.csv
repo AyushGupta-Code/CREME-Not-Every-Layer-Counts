@@ -1,0 +1,4 @@
+task_id,condition,pass@1,pass@5,pass@10,pass_ratio,pert_type
+HumanEval/128,proactive,0.00,0.00,0.00,0.00,A1
+HumanEval/128,proactive_original,0.00,0.00,0.00,0.00,A1
+HumanEval/74,proactive,0.00,0.00,0.00,0.00,A1

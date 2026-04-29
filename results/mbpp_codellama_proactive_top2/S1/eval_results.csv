@@ -1,0 +1,13 @@
+task_id,condition,pass@1,pass@5,pass@10,pass_ratio,pert_type
+68,proactive_top2,0.40,0.98,1.00,0.40,S1
+68,proactive_top2_original,0.30,0.92,1.00,0.30,S1
+165,proactive_top2,1.00,1.00,1.00,1.00,S1
+165,proactive_top2_original,1.00,1.00,1.00,1.00,S1
+460,proactive_top2,0.90,1.00,1.00,0.90,S1
+460,proactive_top2_original,1.00,1.00,1.00,1.00,S1
+556,proactive_top2,0.90,1.00,1.00,0.90,S1
+556,proactive_top2_original,1.00,1.00,1.00,1.00,S1
+724,proactive_top2,0.20,0.78,1.00,0.20,S1
+724,proactive_top2_original,0.50,1.00,1.00,0.50,S1
+750,proactive_top2,0.20,0.78,1.00,0.20,S1
+750,proactive_top2_original,0.70,1.00,1.00,0.70,S1

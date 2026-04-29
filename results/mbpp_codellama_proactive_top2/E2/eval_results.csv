@@ -1,0 +1,17 @@
+task_id,condition,pass@1,pass@5,pass@10,pass_ratio,pert_type
+162,proactive_top2,0.50,1.00,1.00,0.50,E2
+162,proactive_top2_original,0.50,1.00,1.00,0.50,E2
+446,proactive_top2,1.00,1.00,1.00,1.00,E2
+446,proactive_top2_original,0.90,1.00,1.00,0.90,E2
+593,proactive_top2,0.40,0.98,1.00,0.40,E2
+593,proactive_top2_original,0.40,0.98,1.00,0.40,E2
+607,proactive_top2,1.00,1.00,1.00,1.00,E2
+607,proactive_top2_original,1.00,1.00,1.00,1.00,E2
+632,proactive_top2,0.40,0.98,1.00,0.40,E2
+632,proactive_top2_original,0.30,0.92,1.00,0.30,E2
+764,proactive_top2,0.60,1.00,1.00,0.60,E2
+764,proactive_top2_original,0.30,0.92,1.00,0.30,E2
+775,proactive_top2,0.30,0.92,1.00,0.30,E2
+775,proactive_top2_original,1.00,1.00,1.00,1.00,E2
+783,proactive_top2,0.70,1.00,1.00,0.70,E2
+783,proactive_top2_original,0.50,1.00,1.00,0.50,E2

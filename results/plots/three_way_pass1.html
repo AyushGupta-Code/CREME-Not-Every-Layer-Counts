@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Three-Way Pass@1 Comparison</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; margin: 24px; background: #f7f7f9; color: #1f2937; }
+h1 { margin: 0 0 16px; font-size: 24px; }
+.meta { margin-bottom: 18px; color: #4b5563; }
+table { border-collapse: collapse; width: 100%; background: white; box-shadow: 0 8px 28px rgba(0,0,0,0.08); }
+th, td { padding: 10px 12px; border: 1px solid #e5e7eb; text-align: center; }
+th { background: #111827; color: white; position: sticky; top: 0; }
+tr:nth-child(even) td { background: #fafafa; }
+td:first-child, th:first-child { text-align: left; font-weight: 600; }
+.winner { background: #dcfce7 !important; font-weight: 700; color: #166534; }
+.winner-label { font-weight: 700; color: #0f766e; }
+.metric { color: #111827; }
+</style>
+</head>
+<body>
+<h1>Three-Way Pass@1 Comparison</h1>
+<div class="meta">Source: results\plots\three_way_pass1.csv</div>
+<table>
+<thead><tr>
+<th>pert_type</th>
+<th>top2_lora</th>
+<th>pm1</th>
+<th>non_lora_top2</th>
+<th>winner</th>
+</tr></thead><tbody>
+<tr>
+<td>A1</td>
+<td class="metric">0.281818182</td>
+<td class="winner">0.309090909</td>
+<td class="winner">0.309090909</td>
+<td class="winner-label">non_lora_top2, pm1</td>
+</tr>
+<tr>
+<td>A2</td>
+<td class="winner">0.775</td>
+<td class="metric">0.583333333</td>
+<td class="metric">0.375</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>A3</td>
+<td class="winner">0.45</td>
+<td class="metric">0.4125</td>
+<td class="metric">0.21875</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>C1</td>
+<td class="metric">0.327777778</td>
+<td class="metric">0.344444444</td>
+<td class="winner">0.361111111</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>C2</td>
+<td class="metric">0.41</td>
+<td class="metric">0.386666667</td>
+<td class="winner">0.44</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>C3</td>
+<td class="metric">0.265384615</td>
+<td class="metric">0.346153846</td>
+<td class="winner">0.369230769</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>D1</td>
+<td class="metric">0.5</td>
+<td class="metric">0.533333333</td>
+<td class="winner">0.555555556</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>D2</td>
+<td class="metric">0.425</td>
+<td class="winner">0.48</td>
+<td class="metric">0.39</td>
+<td class="winner-label">pm1</td>
+</tr>
+<tr>
+<td>D3</td>
+<td class="winner">0.311111111</td>
+<td class="winner">0.311111111</td>
+<td class="metric">0.277777778</td>
+<td class="winner-label">pm1, top2_lora</td>
+</tr>
+<tr>
+<td>D4</td>
+<td class="metric">0.646153846</td>
+<td class="metric">0.646153846</td>
+<td class="winner">0.676923077</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>E1</td>
+<td class="metric">0.489473684</td>
+<td class="metric">0.494736842</td>
+<td class="winner">0.542105263</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>E2</td>
+<td class="winner">0.6125</td>
+<td class="winner">0.6125</td>
+<td class="metric">0.6</td>
+<td class="winner-label">pm1, top2_lora</td>
+</tr>
+<tr>
+<td>E3</td>
+<td class="metric">0.425</td>
+<td class="metric">0.425</td>
+<td class="winner">0.633333333</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>E4</td>
+<td class="metric">0.353846154</td>
+<td class="metric">0.384615385</td>
+<td class="winner">0.407692308</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+<tr>
+<td>E5</td>
+<td class="winner">0.616666667</td>
+<td class="metric">0.583333333</td>
+<td class="metric">0.5</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>E6</td>
+<td class="winner">0.607692308</td>
+<td class="metric">0.56</td>
+<td class="metric">0.584615385</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>P1</td>
+<td class="winner">0.477634686</td>
+<td class="metric">0.45</td>
+<td class="metric">0.45</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>P2</td>
+<td class="metric">0.477634686</td>
+<td class="winner">0.525</td>
+<td class="metric">0.5</td>
+<td class="winner-label">pm1</td>
+</tr>
+<tr>
+<td>S1</td>
+<td class="winner">0.6</td>
+<td class="metric">0.533333333</td>
+<td class="metric">0.5</td>
+<td class="winner-label">top2_lora</td>
+</tr>
+<tr>
+<td>S2</td>
+<td class="metric">0.5</td>
+<td class="metric">0.523076923</td>
+<td class="winner">0.530769231</td>
+<td class="winner-label">non_lora_top2</td>
+</tr>
+</tbody></table>
+</body>
+</html>
